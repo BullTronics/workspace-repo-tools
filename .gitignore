@@ -1,0 +1,25 @@
+# Cloned repositories (keep workspace directory placeholder tracked)
+workspace/*
+!workspace/.gitkeep
+
+# Local runner runtime directories
+.pids/
+.runners/
+logs/
+
+# Updater transient cache & local backups
+.workspace-tools-cache
+.workspace-tools-backups/
+
+# Local environment secrets (keep .env.example files tracked)
+.env
+**/.env
+.env.local
+**/.env.local
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+

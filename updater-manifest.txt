@@ -1,0 +1,19 @@
+# Managed files and directories upgraded by workspace-repo-tools-updater
+file:workspace.sh
+file:workspace.ps1
+file:workspace.bat
+file:git-all.sh
+file:git-all.ps1
+file:git-all.bat
+file:run-local.sh
+file:run-local.ps1
+file:run-local.bat
+file:workspace-repo-tools-updater.sh
+file:workspace-repo-tools-updater.ps1
+file:workspace-repo-tools-updater.bat
+file:updater-manifest.txt
+file:VERSION
+file:README.md
+dir:templates
+merge_lines:.gitignore
+

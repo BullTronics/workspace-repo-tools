@@ -1,0 +1,6 @@
+# Git repositories managed by git-all
+# Format: url,path[,branch]
+url,path,branch
+git@github.com:example/backend-repo.git,backend-repo,
+git@github.com:example/go-repo.git,go-repo,
+git@github.com:example/flutter-repo.git,flutter-repo,
