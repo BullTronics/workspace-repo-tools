@@ -1,3 +1,6 @@
+# Downloaded workspace-repo-tools library bundles & update cache
+.workspace-tools/
+
 # Cloned repositories (keep workspace directory placeholder tracked)
 workspace/*
 !workspace/.gitkeep
@@ -7,19 +10,17 @@ workspace/*
 .runners/
 logs/
 
-# Updater transient cache & local backups
-.workspace-tools-cache
-.workspace-tools-backups/
-
 # Local environment secrets (keep .env.example files tracked)
 .env
 **/.env
 .env.local
 **/.env.local
 
+# Release build output (in source repository)
+dist/
+
 # OS & Editor files
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-

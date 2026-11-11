@@ -1,214 +1,123 @@
 #!/bin/bash
 # =============================================================================
-# Unified Workspace Entrypoint (Unix / macOS / Linux)
-# Delegates Git multi-repo actions to git-all.sh and service actions to run-local.sh.
+# workspace.sh - Thin Workspace Wrapper
+# Reads TOOLS_VERSION from workspace.conf, ensures the matching library-bundle
+# exists in .workspace-tools/, downloads it from GitHub Releases if missing,
+# and delegates execution.
 # =============================================================================
 
-cd "$(dirname "$0")" || exit 1
-SCRIPT_DIR=$(pwd)
+set -u
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 WORKSPACE_CONF="$SCRIPT_DIR/workspace.conf"
-GIT_ALL="$SCRIPT_DIR/git-all.sh"
-RUN_LOCAL="$SCRIPT_DIR/run-local.sh"
-UPDATER="$SCRIPT_DIR/workspace-repo-tools-updater.sh"
 
-WORKSPACE_NAME="Workspace"
-WORKSPACE_PROMPT="workspace"
+DEFAULT_TOOLS_VERSION="1.0.0"
+DEFAULT_REPO_URL="https://github.com/BullTronics/workspace-repo-tools"
 
-trim_ws() {
-    local val="$1"
-    val="${val#"${val%%[![:space:]]*}"}"
-    val="${val%"${val##*[![:space:]]}"}"
-    printf '%s' "$val"
+_trim() {
+    local v="$1"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    printf '%s' "$v"
 }
 
-strip_outer_quotes() {
-    local val="$1"
-    if [[ "$val" == \"*\" && "$val" == *\" && ${#val} -ge 2 ]]; then
-        val="${val#\"}"
-        val="${val%\"}"
-    elif [[ "$val" == \'*\' && "$val" == *\' && ${#val} -ge 2 ]]; then
-        val="${val#\'}"
-        val="${val%\'}"
-    fi
-    printf '%s' "$val"
-}
-
-load_branding() {
+_read_conf() {
+    local target="$1"
     [[ ! -f "$WORKSPACE_CONF" ]] && return 0
-    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    while IFS= read -r raw || [[ -n "$raw" ]]; do
         local line
-        line=$(printf '%s' "$raw_line" | tr -d '\r')
-        line=$(trim_ws "$line")
-        [[ -z "$line" || "$line" == \#* ]] && continue
-        if [[ "$line" == *=* ]]; then
-            local key="${line%%=*}"
-            local val="${line#*=}"
-            key=$(trim_ws "$key")
-            val=$(trim_ws "$val")
-            val=$(strip_outer_quotes "$val")
-            case "$key" in
-                WORKSPACE_NAME)   [[ -n "$val" ]] && WORKSPACE_NAME="$val" ;;
-                WORKSPACE_PROMPT) [[ -n "$val" ]] && WORKSPACE_PROMPT="$val" ;;
-            esac
+        line=$(printf '%s' "$raw" | tr -d '\r')
+        line=$(_trim "$line")
+        [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+        local k="${line%%=*}"
+        k=$(_trim "$k")
+        if [[ "$k" == "$target" ]]; then
+            local v="${line#*=}"
+            v=$(_trim "$v")
+            v="${v#\"}"; v="${v%\"}"
+            v="${v#\'}"; v="${v%\'}"
+            printf '%s' "$v"
+            return 0
         fi
     done < "$WORKSPACE_CONF"
 }
 
-load_branding
+TOOLS_VERSION=$(_read_conf "TOOLS_VERSION")
+[[ -z "$TOOLS_VERSION" ]] && TOOLS_VERSION="$DEFAULT_TOOLS_VERSION"
 
-write_banner() {
-    echo -e "\033[1;36m"
-    echo "  ===================================================="
-    echo "    $WORKSPACE_NAME - Workspace Control"
-    echo "  ===================================================="
-    echo -e "\033[0m"
-}
+TOOLS_REPO_URL=$(_read_conf "TOOLS_REPO_URL")
+[[ -z "$TOOLS_REPO_URL" ]] && TOOLS_REPO_URL="$DEFAULT_REPO_URL"
+TOOLS_REPO_URL="${TOOLS_REPO_URL%/}"
 
-check_for_updates_banner() {
-    local mode="${1:---bg}"
-    if [[ "${WORKSPACE_UPDATE_CHECKED:-0}" == "1" ]]; then
-        return 0
+TOOLS_RELEASE_BASE_URL=$(_read_conf "TOOLS_RELEASE_BASE_URL")
+TOOLS_RELEASE_BASE_URL="${TOOLS_RELEASE_BASE_URL%/}"
+
+if [[ -n "${WORKSPACE_RELEASE_URL:-}" ]]; then
+    RELEASES_BASE="${WORKSPACE_RELEASE_URL%/}"
+elif [[ -n "$TOOLS_RELEASE_BASE_URL" ]]; then
+    RELEASES_BASE="$TOOLS_RELEASE_BASE_URL"
+else
+    RELEASES_BASE="$TOOLS_REPO_URL/releases"
+fi
+
+STATE_DIR="$SCRIPT_DIR/.workspace-tools"
+BUNDLE_NAME="library-bundle-${TOOLS_VERSION}.sh"
+BUNDLE_PATH="$STATE_DIR/$BUNDLE_NAME"
+
+_http_get() {
+    local url="$1" dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --max-time 20 "$url" -o "$dest" 2>/dev/null
+        return $?
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -T 20 -O "$dest" "$url" 2>/dev/null
+        return $?
     fi
-    if [[ -f "$UPDATER" ]]; then
-        bash "$UPDATER" --banner-check "$mode" || true
-    fi
-}
-
-show_menu() {
-    echo -e "  \033[1;35mRepository Commands (git-all.sh):\033[0m"
-    echo -e "    \033[1;37mclone                         \033[0;37m- Clone repositories from repos.csv\033[0m"
-    echo -e "    \033[1;37mpull [args...]                \033[0;37m- Pull updates across repositories\033[0m"
-    echo -e "    \033[1;37mfetch [args...]               \033[0;37m- Fetch remotes across repositories\033[0m"
-    echo -e "    \033[1;37mrepo-status [-all | <repo>]   \033[0;37m- Show Git status across repositories\033[0m"
-    echo -e "    \033[1;37mlog / branch / checkout       \033[0;37m- Inspect or switch branches across repos\033[0m"
-    echo -e "    \033[1;37mexec <git-cmd> [args...]      \033[0;37m- Run an arbitrary Git command across repos\033[0m"
-    echo -e "    \033[1;37mgit <git-all-args...>         \033[0;37m- Pass any flags/command directly to git-all.sh\033[0m"
-    echo ""
-    echo -e "  \033[1;35mService Commands (run-local.sh):\033[0m"
-    echo -e "    \033[1;37mstart [svc] [--bg]            \033[0;37m- Start all or a single service\033[0m"
-    echo -e "    \033[1;37mstop [svc]                    \033[0;37m- Stop all or a single service\033[0m"
-    echo -e "    \033[1;37mrestart [svc] [--bg]          \033[0;37m- Restart all or a single service\033[0m"
-    echo -e "    \033[1;31mforce-stop                    \033[0;37m- Force stop all services & orphaned processes\033[0m"
-    echo -e "    \033[1;37mstatus                        \033[0;37m- Show running service status\033[0m"
-    echo -e "    \033[1;37mlogs <svc> [lines]            \033[0;37m- Show background log output\033[0m"
-    echo ""
-    echo -e "  \033[1;35mWorkspace Tooling:\033[0m"
-    echo -e "    \033[1;37mcheck-update                  \033[0;37m- Check for workspace-repo-tools updates\033[0m"
-    echo -e "    \033[1;37mupgrade [--dry-run] [--yes]   \033[0;37m- Upgrade workspace tooling from upstream\033[0m"
-    echo -e "    \033[1;37mquit / exit / q               \033[0;37m- Stop active services and exit\033[0m"
-    echo ""
-}
-
-has_active_pids() {
-    local f
-    for f in "$SCRIPT_DIR/.pids/"*.pid; do
-        if [[ -e "$f" ]]; then
-            return 0
-        fi
-    done
     return 1
 }
 
-dispatch_command() {
-    local cmd_raw="$1"
-    shift
-    local cmd
-    cmd=$(printf '%s' "$cmd_raw" | tr '[:upper:]' '[:lower:]')
-
-    case "$cmd" in
-        -r|--repo|--repo=*)
-            sh "$GIT_ALL" "$cmd_raw" "$@"
-            ;;
-        git)
-            if [[ $# -eq 0 ]]; then
-                sh "$GIT_ALL" help
-            else
-                sh "$GIT_ALL" "$@"
-            fi
-            ;;
-        clone|pull|fetch|log|branch|checkout|exec)
-            sh "$GIT_ALL" "$cmd" "$@"
-            ;;
-        repo-status|repos)
-            sh "$GIT_ALL" status "$@"
-            ;;
-        start|stop|restart|force-stop|status|logs)
-            bash "$RUN_LOCAL" "$cmd" "$@"
-            ;;
-        check-update|update-check)
-            bash "$UPDATER" check "$@"
-            ;;
-        upgrade|update)
-            bash "$UPDATER" upgrade "$@"
-            ;;
-        help|-h|--help)
-            write_banner
-            check_for_updates_banner "--bg"
-            show_menu
-            ;;
-        *)
-            echo -e "  \033[1;31mUnknown command: '$cmd_raw'. Use 'help' for available commands.\033[0m" >&2
-            return 1
-            ;;
-    esac
+_verify_bundle_sha() {
+    local sums_file="$1" target_file="$2" asset="$3"
+    [[ ! -f "$sums_file" ]] && return 0
+    local expected actual=""
+    expected=$(awk -v n="$asset" '{ f=$2; sub(/^\.\//,"",f); sub(/^\*/,"",f); if (f==n) { print tolower($1); exit } }' "$sums_file")
+    [[ -z "$expected" ]] && return 0
+    if command -v shasum >/dev/null 2>&1; then
+        actual=$(shasum -a 256 "$target_file" | awk '{print tolower($1)}')
+    elif command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$target_file" | awk '{print tolower($1)}')
+    fi
+    if [[ -n "$actual" && "$actual" != "$expected" ]]; then
+        echo "ERROR: SHA-256 verification failed for $asset." >&2
+        return 1
+    fi
+    return 0
 }
 
-# --- Direct CLI Mode ---
-if [[ $# -gt 0 ]]; then
-    dispatch_command "$@"
-    rc=$?
-    first_cli=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-    case "$first_cli" in
-        start|stop|restart|force-stop|status|logs|help|-h|--help|check-update|update-check|upgrade|update)
-            ;;
-        *)
-            check_for_updates_banner "--bg"
-            ;;
-    esac
-    exit "$rc"
+if [[ ! -f "$BUNDLE_PATH" ]]; then
+    mkdir -p "$STATE_DIR"
+    dl_dir="$RELEASES_BASE/download/v${TOOLS_VERSION}"
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/wrt-dl.XXXXXX")
+
+    echo "Downloading workspace-repo-tools bundle (v${TOOLS_VERSION})..." >&2
+    if ! _http_get "$dl_dir/$BUNDLE_NAME" "$tmp_dir/$BUNDLE_NAME"; then
+        rm -rf "$tmp_dir"
+        echo "ERROR: Failed to download $dl_dir/$BUNDLE_NAME" >&2
+        exit 1
+    fi
+
+    _http_get "$dl_dir/SHA256SUMS.txt" "$tmp_dir/SHA256SUMS.txt" || true
+    if ! _verify_bundle_sha "$tmp_dir/SHA256SUMS.txt" "$tmp_dir/$BUNDLE_NAME" "$BUNDLE_NAME"; then
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+
+    find "$STATE_DIR" -maxdepth 1 -name 'library-bundle-*.sh' -exec rm -f {} + 2>/dev/null || true
+    chmod +x "$tmp_dir/$BUNDLE_NAME"
+    mv -f "$tmp_dir/$BUNDLE_NAME" "$BUNDLE_PATH"
+    rm -rf "$tmp_dir"
 fi
 
-# --- Interactive REPL Mode ---
-cleanup_repl() {
-    echo ""
-    if has_active_pids; then
-        bash "$RUN_LOCAL" stop
-    fi
-    echo -e "  \033[1;36mGoodbye!\033[0m"
-    exit 0
-}
-trap cleanup_repl INT TERM
-
-write_banner
-check_for_updates_banner "sync"
-export WORKSPACE_UPDATE_CHECKED=1
-show_menu
-
-while true; do
-    echo -ne "  \033[1;36m${WORKSPACE_PROMPT}> \033[0m"
-    if ! read -r input_line; then
-        cleanup_repl
-    fi
-
-    input_line=$(trim_ws "$input_line")
-    [[ -z "$input_line" ]] && continue
-
-    set -f
-    # shellcheck disable=SC2086
-    set -- $input_line
-    set +f
-
-    first_lc=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-    if [[ "$first_lc" == "quit" || "$first_lc" == "exit" || "$first_lc" == "q" ]]; then
-        if has_active_pids; then
-            bash "$RUN_LOCAL" stop
-        fi
-        echo -e "  \033[1;36mGoodbye!\033[0m"
-        echo ""
-        exit 0
-    fi
-
-    dispatch_command "$@" || true
-done
+export WORKSPACE_ROOT_DIR="$SCRIPT_DIR"
+exec bash "$BUNDLE_PATH" "$@"
 

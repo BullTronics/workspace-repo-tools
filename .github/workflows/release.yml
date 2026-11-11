@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.0.0)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine release version
+        id: meta
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            ver="${{ github.event.inputs.version }}"
+          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            ver="${GITHUB_REF_NAME#v}"
+          else
+            ver="$(tr -d '[:space:]' < VERSION)"
+          fi
+          ver="${ver#v}"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${ver}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release artifacts
+        run: |
+          chmod +x scripts/build-release.sh install.sh
+          ./scripts/build-release.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Validate bash bundle syntax & local release smoke test
+        run: |
+          bash -n dist/workspace.sh
+          bash -n dist/library-bundle-${{ steps.meta.outputs.version }}.sh
+          bash -n dist/install.sh
+
+          TMP_WS=$(mktemp -d)
+          TMP_REL=$(mktemp -d)
+          mkdir -p "$TMP_REL/download/v${{ steps.meta.outputs.version }}" "$TMP_REL/latest/download"
+          cp dist/* "$TMP_REL/download/v${{ steps.meta.outputs.version }}/"
+          cp dist/* "$TMP_REL/latest/download/"
+
+          git init -q "$TMP_WS"
+          git -C "$TMP_WS" config user.email "ci@example.com"
+          git -C "$TMP_WS" config user.name "CI"
+          git -C "$TMP_WS" commit --allow-empty -q -m "init"
+
+          (cd "$TMP_WS" && WORKSPACE_RELEASE_URL="file://$TMP_REL" bash "$GITHUB_WORKSPACE/dist/install.sh" --version "v${{ steps.meta.outputs.version }}")
+          (cd "$TMP_WS" && ./workspace.sh version)
+          (cd "$TMP_WS" && ./workspace.sh status)
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: dist/*
+

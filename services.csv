@@ -1,17 +1,17 @@
-# Runnable services managed by run-local
+# Runnable services managed by workspace
 # Columns:
 #   name          - Unique service identifier (case-insensitive CLI target)
 #   emoji         - Optional display icon (leave empty or '-' for none)
 #   path          - Relative path inside WORKSPACE_DIR (e.g. backend-repo or monorepo/api)
-#   port          - Default listening TCP port (empty or '-' for portless workers; overridden by .env PORT)
-#   cmd_unix      - Script filename in service dir (e.g. run-local.sh) OR inline shell command
-#   cmd_win       - Script filename in service dir (e.g. run-local.bat / .ps1) OR inline command
+#   repo_type     - Built-in template type: spring-boot | flutter-web | go | vite | custom (or empty)
+#   port          - Default listening TCP port (empty uses repo_type default; '-' for portless; overridden by .env PORT)
+#   cmd_unix      - Optional override script or inline command on macOS/Linux (defaults to repo_type runner)
+#   cmd_win       - Optional override script or inline command on Windows (defaults to repo_type runner)
 #   load_env_file - 'true' or 'false' (default 'false'). When 'true', <service_dir>/.env must exist
 #                   and is loaded into the service's isolated environment before startup; missing .env fails start.
 #   stop_pattern  - Optional ';'-separated pgrep/cmdline patterns for force-stop orphan cleanup
 #   hints         - Optional banner hint shown in interactive terminal windows
-name,emoji,path,port,cmd_unix,cmd_win,load_env_file,stop_pattern,hints
-backend,📡,backend-repo,8080,run-local.sh,run-local.bat,true,spring-boot:run,
-frontend,💻,flutter-repo,3000,run-local.sh,run-local.bat,true,,"[r] Hot reload  [R] Hot restart  [h] Help  [d] DevTools  [q] Quit"
-worker,🤖,go-repo,-,run-local.sh,run-local.bat,false,,
-
+name,emoji,path,repo_type,port,cmd_unix,cmd_win,load_env_file,stop_pattern,hints
+backend,📡,backend-repo,spring-boot,8080,,,true,,
+frontend,💻,flutter-repo,flutter-web,3000,,,true,,
+worker,🤖,go-repo,go,-,,,false,,

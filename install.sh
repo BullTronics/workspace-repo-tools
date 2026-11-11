@@ -3,31 +3,31 @@
 # workspace-repo-tools Bootstrap Installer (macOS / Linux)
 #
 # One-line usage:
+#   curl -fsSL https://github.com/BullTronics/workspace-repo-tools/releases/latest/download/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/BullTronics/workspace-repo-tools/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/BullTronics/workspace-repo-tools/main/install.sh | bash -s -- --dir ./my-workspace
 # =============================================================================
 
 set -euo pipefail
 
-UPSTREAM_URL="${TOOLS_UPSTREAM_URL:-https://github.com/BullTronics/workspace-repo-tools.git}"
-UPSTREAM_BRANCH="${TOOLS_UPSTREAM_BRANCH:-main}"
+REPO_URL="${TOOLS_REPO_URL:-https://github.com/BullTronics/workspace-repo-tools}"
+RELEASE_BASE_OVERRIDE="${WORKSPACE_RELEASE_URL:-}"
+TARGET_TAG=""
 TARGET_DIR=""
-FORCE_FLAG=0
 
 usage() {
     cat <<EOF
 workspace-repo-tools installer
 
 Usage:
-  curl -fsSL https://raw.githubusercontent.com/BullTronics/workspace-repo-tools/main/install.sh | bash
-  ./install.sh [--dir <path>] [--url <git-url>] [--branch <branch>] [--force]
+  curl -fsSL https://github.com/BullTronics/workspace-repo-tools/releases/latest/download/install.sh | bash
+  ./install.sh [--dir <path>] [--version <vX.Y.Z>] [--repo-url <url>] [--release-url <url>]
 
 Options:
-  --dir <path>      Target workspace root directory (default: current directory)
-  --url <git-url>   Upstream repository URL (default: $UPSTREAM_URL)
-  --branch <branch> Upstream branch (default: $UPSTREAM_BRANCH)
-  -f, --force       Allow running inside a repo whose origin matches upstream
-  -h, --help        Show this help message
+  --dir <path>          Target Git repository root (default: current directory)
+  --version <ver>       Specific release tag or version (default: latest)
+  --repo-url <url>      Upstream repository URL (default: $REPO_URL)
+  --release-url <url>   Custom releases base URL (default: <repo-url>/releases)
+  -h, --help            Show this help message
 EOF
 }
 
@@ -35,245 +35,293 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --dir)
             [[ $# -lt 2 || -z "$2" ]] && { echo "Option '--dir' requires a path." >&2; exit 1; }
-            TARGET_DIR="$2"
-            shift 2
-            ;;
-        --url)
-            [[ $# -lt 2 || -z "$2" ]] && { echo "Option '--url' requires a URL." >&2; exit 1; }
-            UPSTREAM_URL="$2"
-            shift 2
-            ;;
-        --branch)
-            [[ $# -lt 2 || -z "$2" ]] && { echo "Option '--branch' requires a branch name." >&2; exit 1; }
-            UPSTREAM_BRANCH="$2"
-            shift 2
-            ;;
-        -f|--force)
-            FORCE_FLAG=1
-            shift
-            ;;
+            TARGET_DIR="$2"; shift 2 ;;
+        --version)
+            [[ $# -lt 2 || -z "$2" ]] && { echo "Option '--version' requires a version." >&2; exit 1; }
+            TARGET_TAG="$2"
+            [[ "$TARGET_TAG" != v* ]] && TARGET_TAG="v$TARGET_TAG"
+            shift 2 ;;
+        --repo-url)
+            [[ $# -lt 2 || -z "$2" ]] && { echo "Option '--repo-url' requires a URL." >&2; exit 1; }
+            REPO_URL="${2%/}"; shift 2 ;;
+        --release-url)
+            [[ $# -lt 2 || -z "$2" ]] && { echo "Option '--release-url' requires a URL." >&2; exit 1; }
+            RELEASE_BASE_OVERRIDE="${2%/}"; shift 2 ;;
         -h|--help)
-            usage
-            exit 0
-            ;;
+            usage; exit 0 ;;
         *)
             echo "Unknown option: $1" >&2
             usage >&2
-            exit 1
-            ;;
+            exit 1 ;;
     esac
 done
 
+trim_ws() {
+    local v="$1"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    printf '%s' "$v"
+}
+
+read_kv() {
+    local file="$1" key="$2"
+    [[ ! -f "$file" ]] && return 0
+    while IFS= read -r raw || [[ -n "$raw" ]]; do
+        local line
+        line=$(printf '%s' "$raw" | tr -d '\r')
+        line=$(trim_ws "$line")
+        [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+        local k="${line%%=*}"
+        k=$(trim_ws "$k")
+        if [[ "$k" == "$key" ]]; then
+            local v="${line#*=}"
+            v=$(trim_ws "$v")
+            v="${v#\"}"; v="${v%\"}"
+            v="${v#\'}"; v="${v%\'}"
+            printf '%s' "$v"
+            return 0
+        fi
+    done < "$file"
+}
+
+set_kv() {
+    local file="$1" key="$2" val="$3"
+    local tmp="${file}.tmp.$$"
+    local found=0
+    : > "$tmp"
+    while IFS= read -r raw || [[ -n "$raw" ]]; do
+        local line trimmed
+        line=$(printf '%s' "$raw" | tr -d '\r')
+        trimmed=$(trim_ws "$line")
+        if [[ -n "$trimmed" && "$trimmed" != \#* && "$trimmed" == *=* ]]; then
+            local k
+            k=$(trim_ws "${trimmed%%=*}")
+            if [[ "$k" == "$key" ]]; then
+                if [[ $found -eq 0 ]]; then
+                    printf '%s=%s\n' "$key" "$val" >> "$tmp"
+                    found=1
+                fi
+                continue
+            fi
+        fi
+        printf '%s\n' "$line" >> "$tmp"
+    done < "$file"
+    [[ $found -eq 0 ]] && printf '%s=%s\n' "$key" "$val" >> "$tmp"
+    mv -f "$tmp" "$file"
+}
+
+http_get() {
+    local url="$1" dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --max-time 20 "$url" -o "$dest" 2>/dev/null
+        return $?
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -T 20 -O "$dest" "$url" 2>/dev/null
+        return $?
+    fi
+    return 1
+}
+
+verify_sha() {
+    local sums="$1" file="$2" asset="$3"
+    [[ ! -f "$sums" ]] && return 0
+    local expected actual=""
+    expected=$(awk -v n="$asset" '{ f=$2; sub(/^\.\//,"",f); sub(/^\*/,"",f); if (f==n) { print tolower($1); exit } }' "$sums")
+    [[ -z "$expected" ]] && return 0
+    if command -v shasum >/dev/null 2>&1; then
+        actual=$(shasum -a 256 "$file" | awk '{print tolower($1)}')
+    elif command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$file" | awk '{print tolower($1)}')
+    fi
+    if [[ -n "$actual" && "$actual" != "$expected" ]]; then
+        echo "ERROR: Checksum verification failed for $asset." >&2
+        return 1
+    fi
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# 1. Preflight Checks: Git installed, Git repo root, clean working tree
+# -----------------------------------------------------------------------------
 if ! command -v git >/dev/null 2>&1; then
-    echo "ERROR: Git is required to install workspace-repo-tools." >&2
+    echo "ERROR: Git is not installed. Please install Git and try again." >&2
     exit 1
 fi
 
 if [[ -z "$TARGET_DIR" ]]; then
     TARGET_DIR=$(pwd)
 else
-    mkdir -p "$TARGET_DIR"
+    if [[ ! -d "$TARGET_DIR" ]]; then
+        echo "ERROR: Target directory does not exist: $TARGET_DIR" >&2
+        exit 1
+    fi
     TARGET_DIR=$(cd "$TARGET_DIR" && pwd)
 fi
 
-trim_ws() {
-    local val="$1"
-    val="${val#"${val%%[![:space:]]*}"}"
-    val="${val%"${val##*[![:space:]]}"}"
-    printf '%s' "$val"
-}
+if ! git -C "$TARGET_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "ERROR: Current directory is not a Git repository: $TARGET_DIR" >&2
+    echo "Please initialize a Git repository first ('git init') and commit initial files." >&2
+    exit 1
+fi
 
-normalize_url() {
-    local u="$1"
-    u=$(printf '%s' "$u" | tr '[:upper:]' '[:lower:]')
-    u="${u%/}"
-    u="${u%.git}"
-    if [[ "$u" == git@github.com:* ]]; then
-        u="https://github.com/${u#git@github.com:}"
-    fi
-    printf '%s' "$u"
-}
+TOP_LEVEL=$(git -C "$TARGET_DIR" rev-parse --show-toplevel)
+PHYS_TOP=$(cd "$TOP_LEVEL" && pwd -P)
+PHYS_DIR=$(cd "$TARGET_DIR" && pwd -P)
+if [[ "$PHYS_TOP" != "$PHYS_DIR" ]]; then
+    echo "ERROR: Please run install from the root of your Git repository:" >&2
+    echo "  Repo root:   $PHYS_TOP" >&2
+    echo "  Current dir: $PHYS_DIR" >&2
+    exit 1
+fi
 
-if [[ $FORCE_FLAG -eq 0 ]] && git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
-    origin_url=$(git -C "$TARGET_DIR" config --get remote.origin.url 2>/dev/null || true)
-    if [[ -n "$origin_url" && "$(normalize_url "$origin_url")" == "$(normalize_url "$UPSTREAM_URL")" ]]; then
-        echo "ERROR: Target directory's origin matches upstream ($UPSTREAM_URL)." >&2
-        echo "Choose a different --dir or pass --force." >&2
+PENDING=$(git -C "$TARGET_DIR" status --porcelain 2>/dev/null)
+if [[ -n "$PENDING" ]]; then
+    echo "ERROR: Current Git repository has pending uncommitted or untracked changes:" >&2
+    printf '%s\n' "$PENDING" >&2
+    echo "" >&2
+    echo "Please stage and commit (or stash) pending changes before installing workspace-repo-tools." >&2
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# 2. Fetch release metadata and assets
+# -----------------------------------------------------------------------------
+if [[ -n "$RELEASE_BASE_OVERRIDE" ]]; then
+    RELEASES_BASE="$RELEASE_BASE_OVERRIDE"
+else
+    RELEASES_BASE="$REPO_URL/releases"
+fi
+
+STAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/wrt-install.XXXXXX")
+trap 'rm -rf "$STAGE_DIR"' EXIT INT TERM
+
+if [[ -n "$TARGET_TAG" ]]; then
+    META_URL="$RELEASES_BASE/download/$TARGET_TAG/release-meta.env"
+else
+    META_URL="$RELEASES_BASE/latest/download/release-meta.env"
+fi
+
+echo "Fetching release metadata from $META_URL..."
+if ! http_get "$META_URL" "$STAGE_DIR/release-meta.env"; then
+    echo "ERROR: Failed to fetch release metadata from $META_URL" >&2
+    exit 1
+fi
+
+REL_VER=$(read_kv "$STAGE_DIR/release-meta.env" "VERSION")
+REL_TAG=$(read_kv "$STAGE_DIR/release-meta.env" "TAG")
+REL_SCHEMA=$(read_kv "$STAGE_DIR/release-meta.env" "CONFIG_SCHEMA_VERSION")
+[[ -z "$REL_TAG" ]] && REL_TAG="v$REL_VER"
+[[ -z "$REL_SCHEMA" ]] && REL_SCHEMA="1"
+
+if [[ -z "$REL_VER" ]]; then
+    echo "ERROR: Invalid release-meta.env (missing VERSION)." >&2
+    exit 1
+fi
+
+DL_BASE="$RELEASES_BASE/download/$REL_TAG"
+echo "Downloading workspace-repo-tools $REL_TAG into $TARGET_DIR..."
+
+http_get "$DL_BASE/SHA256SUMS.txt" "$STAGE_DIR/SHA256SUMS.txt" || true
+
+BUNDLE_SH="library-bundle-${REL_VER}.sh"
+BUNDLE_PS1="library-bundle-${REL_VER}.ps1"
+BUNDLE_BAT="library-bundle-${REL_VER}.bat"
+
+for f in workspace.sh workspace.ps1 workspace.bat "$BUNDLE_SH" "$BUNDLE_PS1" "$BUNDLE_BAT" workspace.conf.default repos.csv.default services.csv.default gitignore.default; do
+    if ! http_get "$DL_BASE/$f" "$STAGE_DIR/$f"; then
+        echo "ERROR: Failed to download release asset: $DL_BASE/$f" >&2
         exit 1
     fi
-fi
-
-TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/wrt-install.XXXXXX")
-cleanup() {
-    rm -rf "$TMP_DIR"
-}
-trap cleanup EXIT INT TERM
-
-echo "Downloading workspace-repo-tools ($UPSTREAM_BRANCH) from $UPSTREAM_URL..."
-GIT_TERMINAL_PROMPT=0 git clone --quiet --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_URL" "$TMP_DIR/src"
-
-SRC="$TMP_DIR/src"
-REMOTE_SHA=$(git -C "$SRC" rev-parse HEAD)
-REMOTE_VER="1.0.0"
-if [[ -f "$SRC/VERSION" ]]; then
-    REMOTE_VER=$(trim_ws "$(head -n 1 "$SRC/VERSION" | tr -d '\r')")
-fi
-
-# Collect managed files & dirs from updater-manifest.txt
-MANIFEST_FILES=()
-MANIFEST_DIRS=()
-MANIFEST_MERGES=()
-
-if [[ -f "$SRC/updater-manifest.txt" ]]; then
-    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-        line=$(printf '%s' "$raw_line" | tr -d '\r')
-        line=$(trim_ws "$line")
-        [[ -z "$line" || "$line" == \#* ]] && continue
-        if [[ "$line" == file:* ]]; then
-            MANIFEST_FILES+=("$(trim_ws "${line#file:}")")
-        elif [[ "$line" == dir:* ]]; then
-            MANIFEST_DIRS+=("$(trim_ws "${line#dir:}")")
-        elif [[ "$line" == merge_lines:* ]]; then
-            MANIFEST_MERGES+=("$(trim_ws "${line#merge_lines:}")")
-        fi
-    done < "$SRC/updater-manifest.txt"
-fi
-
-if [[ ${#MANIFEST_FILES[@]} -eq 0 ]]; then
-    MANIFEST_FILES=(
-        "workspace.sh" "workspace.ps1" "workspace.bat"
-        "git-all.sh" "git-all.ps1" "git-all.bat"
-        "run-local.sh" "run-local.ps1" "run-local.bat"
-        "workspace-repo-tools-updater.sh" "workspace-repo-tools-updater.ps1" "workspace-repo-tools-updater.bat"
-        "updater-manifest.txt" "VERSION" "README.md"
-    )
-    MANIFEST_DIRS=("templates")
-    MANIFEST_MERGES=(".gitignore")
-fi
-
-TS=$(date +"%Y%m%d-%H%M%S")
-BACKUP_DIR="$TARGET_DIR/.workspace-tools-backups/$TS"
-BACKUP_CREATED=0
-
-backup_if_differs() {
-    local rel="$1"
-    local dst="$TARGET_DIR/$rel"
-    local src_f="$SRC/$rel"
-    if [[ -f "$dst" ]] && ! cmp -s "$dst" "$src_f"; then
-        if [[ $BACKUP_CREATED -eq 0 ]]; then
-            mkdir -p "$BACKUP_DIR"
-            BACKUP_CREATED=1
-        fi
-        mkdir -p "$BACKUP_DIR/$(dirname "$rel")"
-        cp -p "$dst" "$BACKUP_DIR/$rel"
-    fi
-}
-
-echo "Installing tooling into: $TARGET_DIR"
-
-for f in "${MANIFEST_FILES[@]}"; do
-    [[ ! -f "$SRC/$f" ]] && continue
-    backup_if_differs "$f"
-    mkdir -p "$TARGET_DIR/$(dirname "$f")"
-    cp "$SRC/$f" "$TARGET_DIR/$f"
-    [[ "$f" == *.sh ]] && chmod +x "$TARGET_DIR/$f"
+    verify_sha "$STAGE_DIR/SHA256SUMS.txt" "$STAGE_DIR/$f" "$f"
 done
 
-for d in "${MANIFEST_DIRS[@]}"; do
-    [[ ! -d "$SRC/$d" ]] && continue
-    while IFS= read -r abs_f; do
-        rel="${abs_f#"$SRC"/}"
-        backup_if_differs "$rel"
-        mkdir -p "$TARGET_DIR/$(dirname "$rel")"
-        cp "$abs_f" "$TARGET_DIR/$rel"
-        [[ "$rel" == *.sh ]] && chmod +x "$TARGET_DIR/$rel"
-    done < <(find "$SRC/$d" -type f | sort)
-done
+# -----------------------------------------------------------------------------
+# 3. Install 3 unified scripts + configs + gitignored .workspace-tools/ bundle
+# -----------------------------------------------------------------------------
+cp "$STAGE_DIR/workspace.sh" "$TARGET_DIR/workspace.sh"
+chmod +x "$TARGET_DIR/workspace.sh"
+cp "$STAGE_DIR/workspace.ps1" "$TARGET_DIR/workspace.ps1"
+cp "$STAGE_DIR/workspace.bat" "$TARGET_DIR/workspace.bat"
 
-# Initialize user-owned configuration files ONLY if missing
-for cfg in workspace.conf repos.csv services.csv; do
-    if [[ -f "$SRC/$cfg" ]]; then
-        if [[ ! -f "$TARGET_DIR/$cfg" ]]; then
-            cp "$SRC/$cfg" "$TARGET_DIR/$cfg"
-            echo "  + Created $cfg (edit this for your project)"
-        else
-            echo "  = Preserved existing $cfg"
-        fi
-    fi
-done
+STATE_DIR="$TARGET_DIR/.workspace-tools"
+mkdir -p "$STATE_DIR"
+find "$STATE_DIR" -maxdepth 1 -name 'library-bundle-*' -exec rm -f {} + 2>/dev/null || true
+cp "$STAGE_DIR/$BUNDLE_SH" "$STATE_DIR/$BUNDLE_SH"
+cp "$STAGE_DIR/$BUNDLE_PS1" "$STATE_DIR/$BUNDLE_PS1"
+cp "$STAGE_DIR/$BUNDLE_BAT" "$STATE_DIR/$BUNDLE_BAT"
+chmod +x "$STATE_DIR/$BUNDLE_SH"
 
-# Merge or install .gitignore
-for mf in "${MANIFEST_MERGES[@]}"; do
-    [[ ! -f "$SRC/$mf" ]] && continue
-    if [[ ! -f "$TARGET_DIR/$mf" ]]; then
-        cp "$SRC/$mf" "$TARGET_DIR/$mf"
-        echo "  + Created $mf"
-    else
-        missing_lines=()
-        while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-            line=$(printf '%s' "$raw_line" | tr -d '\r')
-            trimmed=$(trim_ws "$line")
-            [[ -z "$trimmed" || "$trimmed" == \#* ]] && continue
-            if ! grep -Fqx "$line" "$TARGET_DIR/$mf" 2>/dev/null; then
-                missing_lines+=("$line")
-            fi
-        done < "$SRC/$mf"
-        if [[ ${#missing_lines[@]} -gt 0 ]]; then
-            backup_if_differs "$mf"
-            {
-                printf '\n# Added by workspace-repo-tools installer (%s)\n' "$TS"
-                printf '%s\n' "${missing_lines[@]}"
-            } >> "$TARGET_DIR/$mf"
-            echo "  ~ Appended ${#missing_lines[@]} rule(s) to $mf"
-        fi
-    fi
-done
-
-# Ensure workspace directory placeholder exists
-WS_REL_DIR="workspace"
-if [[ -f "$TARGET_DIR/workspace.conf" ]]; then
-    raw_ws=$(grep -E '^[[:space:]]*WORKSPACE_DIR[[:space:]]*=' "$TARGET_DIR/workspace.conf" 2>/dev/null | head -n 1 | cut -d'=' -f2- | tr -d '\r' || true)
-    raw_ws=$(trim_ws "$raw_ws")
-    raw_ws="${raw_ws#\"}"
-    raw_ws="${raw_ws%\"}"
-    raw_ws="${raw_ws#\'}"
-    raw_ws="${raw_ws%\'}"
-    [[ -n "$raw_ws" ]] && WS_REL_DIR="$raw_ws"
-fi
-mkdir -p "$TARGET_DIR/$WS_REL_DIR"
-touch "$TARGET_DIR/$WS_REL_DIR/.gitkeep"
-
-# Record lock & cache
 NOW_EPOCH=$(date +%s)
-NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)
-
-cat <<EOF > "$TARGET_DIR/.workspace-tools.lock"
-INSTALLED_VERSION=$REMOTE_VER
-INSTALLED_COMMIT=$REMOTE_SHA
-UPSTREAM_URL=$UPSTREAM_URL
-UPSTREAM_BRANCH=$UPSTREAM_BRANCH
-UPDATED_AT=$NOW_ISO
-EOF
-
-cat <<EOF > "$TARGET_DIR/.workspace-tools-cache"
+cat <<EOF > "$STATE_DIR/update-cache"
 LAST_CHECK_EPOCH=$NOW_EPOCH
 LAST_ATTEMPT_EPOCH=$NOW_EPOCH
-REMOTE_COMMIT=$REMOTE_SHA
-REMOTE_VERSION=$REMOTE_VER
-MATCHED_COMMIT=$REMOTE_SHA
+REMOTE_VERSION=$REL_VER
 UPDATE_AVAILABLE=false
 EOF
 
-if [[ $BACKUP_CREATED -eq 1 ]]; then
-    echo "Backups of replaced files saved to: .workspace-tools-backups/$TS"
+if [[ ! -f "$TARGET_DIR/workspace.conf" ]]; then
+    cp "$STAGE_DIR/workspace.conf.default" "$TARGET_DIR/workspace.conf"
+    echo "  + Created workspace.conf"
+else
+    echo "  = Preserved existing workspace.conf (updated TOOLS_VERSION=$REL_VER)"
+fi
+set_kv "$TARGET_DIR/workspace.conf" "TOOLS_VERSION" "$REL_VER"
+set_kv "$TARGET_DIR/workspace.conf" "CONFIG_SCHEMA_VERSION" "$REL_SCHEMA"
+set_kv "$TARGET_DIR/workspace.conf" "TOOLS_REPO_URL" "$REPO_URL"
+
+if [[ ! -f "$TARGET_DIR/repos.csv" ]]; then
+    cp "$STAGE_DIR/repos.csv.default" "$TARGET_DIR/repos.csv"
+    echo "  + Created repos.csv"
+else
+    echo "  = Preserved existing repos.csv"
 fi
 
+if [[ ! -f "$TARGET_DIR/services.csv" ]]; then
+    cp "$STAGE_DIR/services.csv.default" "$TARGET_DIR/services.csv"
+    echo "  + Created services.csv"
+else
+    echo "  = Preserved existing services.csv"
+fi
+
+if [[ ! -f "$TARGET_DIR/.gitignore" ]]; then
+    cp "$STAGE_DIR/gitignore.default" "$TARGET_DIR/.gitignore"
+    echo "  + Created .gitignore"
+else
+    missing_rules=()
+    while IFS= read -r raw || [[ -n "$raw" ]]; do
+        line=$(printf '%s' "$raw" | tr -d '\r')
+        trimmed=$(trim_ws "$line")
+        [[ -z "$trimmed" || "$trimmed" == \#* ]] && continue
+        if ! grep -Fqx "$line" "$TARGET_DIR/.gitignore" 2>/dev/null; then
+            missing_rules+=("$line")
+        fi
+    done < "$STAGE_DIR/gitignore.default"
+    if [[ ${#missing_rules[@]} -gt 0 ]]; then
+        {
+            printf '\n# Added by workspace-repo-tools installer\n'
+            printf '%s\n' "${missing_rules[@]}"
+        } >> "$TARGET_DIR/.gitignore"
+        echo "  ~ Updated .gitignore (+${#missing_rules[@]} rule(s))"
+    else
+        echo "  = .gitignore already up to date"
+    fi
+fi
+
+rm -rf "$STAGE_DIR"
+trap - EXIT INT TERM
+
 echo ""
-echo "✓ workspace-repo-tools ($REMOTE_VER, commit ${REMOTE_SHA:0:7}) installed successfully!"
+echo "✓ workspace-repo-tools $REL_TAG installed successfully!"
+echo ""
+echo "Installed files:"
+echo "  Scripts (committed): workspace.sh, workspace.ps1, workspace.bat"
+echo "  Configs (committed): workspace.conf, repos.csv, services.csv, .gitignore"
+echo "  Bundle (gitignored): .workspace-tools/$BUNDLE_SH (and .ps1/.bat)"
 echo ""
 echo "Next steps:"
-echo "  1. Edit workspace.conf, repos.csv, and services.csv"
-echo "  2. Run ./workspace.sh clone"
-echo "  3. Run ./workspace.sh start   (or ./workspace.sh for interactive mode)"
+echo "  1. Update workspace.conf, repos.csv, and services.csv for your project"
+echo "  2. Verify the setup (e.g. run './workspace.sh status' and './workspace.sh clone')"
+echo "  3. Commit the integration changes with:"
+echo "     git add workspace.sh workspace.ps1 workspace.bat workspace.conf repos.csv services.csv .gitignore"
+echo "     git commit -m \"added integration of $REPO_URL\""
 echo ""
-
