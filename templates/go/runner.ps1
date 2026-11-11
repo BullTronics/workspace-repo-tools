@@ -2,8 +2,8 @@
 function Invoke-TemplateGo {
     $entrypoint = $env:GO_ENTRYPOINT
     if (-not $entrypoint) {
-        $rootGo = Get-ChildItem -Path . -Filter "*.go" -File -ErrorAction SilentlyContinue
-        if ($rootGo -and $rootGo.Count -gt 0) {
+        $rootGo = @(Get-ChildItem -Path . -Filter "*.go" -File -ErrorAction SilentlyContinue)
+        if ($rootGo.Count -gt 0) {
             $entrypoint = "."
         } else {
             $candidates = @()
@@ -19,7 +19,8 @@ function Invoke-TemplateGo {
             } elseif ($candidates.Count -gt 1) {
                 $joined = $candidates -join ", "
                 Write-Host "ERROR: Multiple Go entrypoints found ($joined). Set GO_ENTRYPOINT in .env or cmd_win in services.csv." -ForegroundColor Red
-                return 1
+                $global:LASTEXITCODE = 1
+                return
             } else {
                 $entrypoint = "."
             }

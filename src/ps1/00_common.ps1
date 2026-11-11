@@ -2,7 +2,7 @@
 # library-bundle (Windows PowerShell) - Module: 00_common.ps1
 # =============================================================================
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8

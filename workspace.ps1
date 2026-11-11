@@ -14,7 +14,7 @@ try {
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WorkspaceConf = Join-Path $ScriptDir "workspace.conf"
 
-$DefaultToolsVersion = "1.0.1"
+$DefaultToolsVersion = "1.0.2"
 $DefaultRepoUrl = "https://github.com/BullTronics/workspace-repo-tools"
 
 function Read-WrapperConfValue {
@@ -124,7 +124,10 @@ if (-not (Test-Path $bundlePs1Path -PathType Leaf)) {
     }
 }
 
+$ErrorActionPreference = "Continue"
 $env:WORKSPACE_ROOT_DIR = $ScriptDir
+$global:LASTEXITCODE = 0
 & $bundlePs1Path @args
-exit $LASTEXITCODE
+$exitCode = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }
+exit $exitCode
 

@@ -107,14 +107,26 @@ if (-not $Dir) {
     $TargetDir = (Resolve-Path $Dir).Path
 }
 
-$inside = & git -C $TargetDir rev-parse --is-inside-work-tree 2>$null
-if ($LASTEXITCODE -ne 0 -or "$inside".Trim() -ne "true") {
+$prevErrPref = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $inside = & git -C $TargetDir rev-parse --is-inside-work-tree 2>$null
+    $insideRc = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $prevErrPref
+}
+if ($insideRc -ne 0 -or "$inside".Trim() -ne "true") {
     Write-Host "ERROR: Current directory is not a Git repository: $TargetDir" -ForegroundColor Red
     Write-Host "Please initialize a Git repository first ('git init') and commit initial files." -ForegroundColor Yellow
     exit 1
 }
 
-$topLevel = (& git -C $TargetDir rev-parse --show-toplevel 2>$null).Trim()
+$ErrorActionPreference = "Continue"
+try {
+    $topLevel = (& git -C $TargetDir rev-parse --show-toplevel 2>$null | Out-String).Trim()
+} finally {
+    $ErrorActionPreference = $prevErrPref
+}
 $physTop = (Resolve-Path $topLevel).Path.TrimEnd('\', '/')
 $physDir = (Resolve-Path $TargetDir).Path.TrimEnd('\', '/')
 if ($physTop -ne $physDir) {
@@ -122,7 +134,12 @@ if ($physTop -ne $physDir) {
     exit 1
 }
 
-$pending = & git -C $TargetDir status --porcelain 2>$null
+$ErrorActionPreference = "Continue"
+try {
+    $pending = & git -C $TargetDir status --porcelain 2>$null
+} finally {
+    $ErrorActionPreference = $prevErrPref
+}
 if ($pending) {
     Write-Host "ERROR: Current Git repository has pending uncommitted or untracked changes:" -ForegroundColor Red
     foreach ($p in $pending) { Write-Host "  $p" -ForegroundColor Yellow }

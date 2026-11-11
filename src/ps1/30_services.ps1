@@ -169,7 +169,7 @@ function Write-ServiceStatus {
         foreach ($svc in $script:services) {
             $label = Format-ServiceLabel -svc $svc
             $port = Get-ServicePort -svc $svc
-            $listenPids = Get-PortListenPids -Port $port
+            $listenPids = @(Get-PortListenPids -Port $port)
             $runnerPid = Get-RunnerPid -svc $svc
             $typeTag = if ($svc.RepoType -ne "custom") { " [$($svc.RepoType)]" } else { "" }
 
@@ -317,14 +317,14 @@ function Start-ServiceEntry {
         if (-not (Test-Path $envFile -PathType Leaf)) {
             Write-Host "  ERROR: .env file not found for '$($svc.Name)' at: $envFile (load_env_file=true)" -ForegroundColor Red
             if (Test-Path (Join-Path $svc.Dir ".env.example") -PathType Leaf) {
-                Write-Host "  Hint: Found .env.example — copy it to .env and configure it before starting." -ForegroundColor Yellow
+                Write-Host "  Hint: Found .env.example -- copy it to .env and configure it before starting." -ForegroundColor Yellow
             }
             return $false
         }
     }
 
     $port = Get-ServicePort -svc $svc
-    $listenPids = Get-PortListenPids -Port $port
+    $listenPids = @(Get-PortListenPids -Port $port)
     $runnerPid = Get-RunnerPid -svc $svc
     if ($listenPids.Count -gt 0 -or $runnerPid) {
         $activePid = if ($listenPids.Count -gt 0) { $listenPids[0] } else { $runnerPid }
@@ -425,7 +425,7 @@ function Stop-AllServices {
 
 function Force-KillByPort {
     param([int]$Port, [string]$Label)
-    $pids = Get-PortListenPids -Port $Port
+    $pids = @(Get-PortListenPids -Port $Port)
     if ($pids.Count -gt 0) {
         foreach ($procId in $pids) {
             try {
@@ -472,10 +472,10 @@ function Force-StopAllServices {
         if (-not $port -and $svc.StopPatterns.Count -eq 0) { continue }
         $label = Format-ServiceLabel -svc $svc
         if ($port) {
-            Write-Host "  $label (port $port):" -ForegroundColor White
+            Write-Host "  ${label} (port $port):" -ForegroundColor White
             Force-KillByPort -Port $port -Label $svc.Name
         } else {
-            Write-Host "  $label:" -ForegroundColor White
+            Write-Host "  ${label}:" -ForegroundColor White
         }
         foreach ($pat in $svc.StopPatterns) { Force-KillByCommandLine -Pattern $pat -Label $svc.Name }
         Write-Host ""

@@ -288,4 +288,5 @@ while ($true) {
 
     $null = Invoke-WorkspaceCommand -CmdArgs $parts
 }
+exit 0
 

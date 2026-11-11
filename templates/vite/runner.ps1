@@ -12,7 +12,7 @@ function Invoke-TemplateVite {
             Write-Host "Installing dependencies with npm..." -ForegroundColor Cyan
             & npm install
         }
-        if ($LASTEXITCODE -ne 0) { return $LASTEXITCODE }
+        if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = $LASTEXITCODE; return }
     }
     $devCmd = if ($env:DEV_CMD) { $env:DEV_CMD } else { "npm run dev" }
     & cmd.exe /c $devCmd

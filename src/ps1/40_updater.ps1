@@ -201,7 +201,7 @@ function Show-ConfigSchemaWarnings {
 
     if ($warnings.Count -gt 0) {
         Write-Host ""
-        Write-Host "  Config structure updates detected — please review your config files:" -ForegroundColor Yellow
+        Write-Host "  Config structure updates detected -- please review your config files:" -ForegroundColor Yellow
         foreach ($w in $warnings) { Write-Host "   - $w" }
     }
 }
