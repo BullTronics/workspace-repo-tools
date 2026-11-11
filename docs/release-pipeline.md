@@ -53,7 +53,7 @@ Before finishing, `build-release.sh` runs `bash -n` on `library-bundle-<ver>.sh`
 - `push` to tags matching `v*` (e.g., `v1.0.0`)
 - `workflow_dispatch` with optional `version` input
 
-### Workflow Steps (`build-and-release` on `ubuntu-latest`)
+### Workflow Steps (`build-and-release` on `ubuntu-24.04`)
 1. **Determine release version**:
    - Uses manual input `version` if provided,
    - Else strips leading `v` from `${GITHUB_REF_NAME}` for `v*` tag pushes,
@@ -63,7 +63,7 @@ Before finishing, `build-release.sh` runs `bash -n` on `library-bundle-<ver>.sh`
    - Runs `bash -n` on `dist/workspace.sh`, `dist/library-bundle-<ver>.sh`, and `dist/install.sh`.
    - Creates a temporary `file://` mock release folder and an initialized empty Git repo, runs `dist/install.sh --version v<ver>`, and executes `./workspace.sh version` and `./workspace.sh status` against the installed workspace.
 4. **Create GitHub Release**:
-   - Publishes `tag_name: v<ver>` with all `dist/*` files using `softprops/action-gh-release@v2` (`generate_release_notes: true`).
+   - Publishes `tag_name: v<ver>` with all `dist/*` files using `softprops/action-gh-release@v3` (`generate_release_notes: true`).
 
 ---
 
