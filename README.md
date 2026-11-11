@@ -138,8 +138,8 @@ Decouples runnable services from `repos.csv` and supports built-in `repo_type` r
 **Built-in `repo_type` defaults:**
 - `spring-boot`: port `8080`, stop pattern `spring-boot:run` — runs `$JAR_FILE` if set, otherwise `./mvnw spring-boot:run` (`.\mvnw.cmd` on Windows) or `mvn spring-boot:run`.
 - `flutter-web`: port `3000`, Flutter keyboard hints — runs `flutter run -d chrome --web-port <PORT>` with an isolated Chrome profile (`$CHROME_USER_DATA_DIR`) and `--dart-define-from-file=.env` if `.env` exists.
-- `go`: portless by default — runs `go run ${GO_ENTRYPOINT:-.}`.
-- `vite`: port `5173`, stop pattern `vite` — exports `PORT` and executes `${DEV_CMD:-npm run dev}`.
+- `go`: portless by default — runs `go run <entrypoint>` (uses `$GO_ENTRYPOINT`, else `.` when root `.go` files exist, else auto-detects a single `./cmd/*/main.go`, plus optional `$GO_RUN_ARGS`).
+- `vite`: port `5173`, stop pattern `vite` — exports `PORT`, installs dependencies (`pnpm`/`yarn`/`npm install`) when `package.json` exists and `node_modules` is missing, and executes `${DEV_CMD:-npm run dev}`.
 - `custom` (or empty): executes `cmd_unix` / `cmd_win` directly.
 
 ---

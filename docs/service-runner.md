@@ -41,8 +41,8 @@ name,emoji,path,repo_type,port,cmd_unix,cmd_win,load_env_file,stop_pattern,hints
 During [`build-release.sh`](../scripts/build-release.sh), each `templates/<type>/runner.{sh,ps1}` is embedded directly inside `library-bundle-<version>.{sh,ps1}`:
 - **`spring-boot`**: Runs `$JAR_FILE` with `java $JVM_ARGS -jar "$JAR_FILE"` if `$JAR_FILE` points to an existing file; otherwise runs `./mvnw spring-boot:run` (`.\mvnw.cmd` on Windows) if present, falling back to `mvn spring-boot:run`. Defaults `JVM_ARGS` to `-Duser.timezone=UTC`.
 - **`flutter-web`**: Cleans `.dart_tool/chrome-device`, constructs a per-app Chrome profile dir (`$CHROME_USER_DATA_DIR` or `/tmp/<app_slug>-chrome-data`), appends `--dart-define-from-file=.env` when `.env` exists, appends `$FLUTTER_EXTRA_ARGS`, and invokes `flutter run -d chrome --web-port <PORT> ...`. On Windows (`templates/flutter-web/runner.ps1`), compiles and injects `chrome-launcher.exe` via `CHROME_EXECUTABLE` so user-data-dir flags pass cleanly.
-- **`go`**: Runs `go run ${GO_ENTRYPOINT:-.}`.
-- **`vite`**: Exports `PORT="${PORT:-5173}"` and invokes `${DEV_CMD:-npm run dev}` via `bash -c` (Unix) or `cmd.exe /c` (Windows).
+- **`go`**: Resolves entrypoint from `$GO_ENTRYPOINT`, or `.` when root `*.go` files exist, or automatically detects a single `cmd/*/main.go` directory (failing cleanly if multiple `cmd/*` entrypoints exist without `$GO_ENTRYPOINT`), and runs `go run <entrypoint>` (forwarding optional `$GO_RUN_ARGS`).
+- **`vite`**: Exports `PORT="${PORT:-5173}"`, runs `pnpm install` / `yarn install` / `npm install` automatically when `package.json` exists without `node_modules/`, and invokes `${DEV_CMD:-npm run dev}` via `bash -c` (Unix) or `cmd.exe /c` (Windows).
 
 ---
 

@@ -11,7 +11,7 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 WORKSPACE_CONF="$SCRIPT_DIR/workspace.conf"
 
-DEFAULT_TOOLS_VERSION="1.0.0"
+DEFAULT_TOOLS_VERSION="1.0.1"
 DEFAULT_REPO_URL="https://github.com/BullTronics/workspace-repo-tools"
 
 _trim() {

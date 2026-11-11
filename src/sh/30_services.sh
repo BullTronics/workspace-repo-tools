@@ -668,12 +668,14 @@ force_kill_cmd() {
         pids=$(ps aux 2>/dev/null | grep -F "$pattern" | grep -v grep | awk '{print $2}' || true)
     fi
     if [[ -n "$pids" ]]; then
-        for p in $pids; do
-            if [[ "$p" != "$$" ]]; then
-                echo -e "    \033[1;33mKilling $label process matching '$pattern' (PID: $p)\033[0m"
-                kill_pid_tree "$p"
-            fi
-        done
+        while IFS= read -r p; do
+            p=$(trim_ws "$p")
+            [[ -z "$p" || "$p" == "$$" ]] && continue
+            echo -e "    \033[1;33mKilling $label process matching '$pattern' (PID: $p)\033[0m"
+            kill_pid_tree "$p"
+        done <<EOF
+$pids
+EOF
     else
         echo -e "    \033[1;30mNo process found matching '$pattern'\033[0m"
     fi
@@ -713,12 +715,15 @@ force_stop_all_services() {
             echo -e "  \033[1;37m$label:\033[0m"
         fi
         if [[ -n "$stop_patterns" ]]; then
-            local IFS=';' pat
-            for pat in $stop_patterns; do
+            local pat_lines pat
+            pat_lines=$(printf '%s\n' "$stop_patterns" | tr ';' '\n')
+            while IFS= read -r pat; do
                 pat=$(trim_ws "$pat")
                 [[ -z "$pat" ]] && continue
                 force_kill_cmd "$pat" "$name"
-            done
+            done <<EOF
+$pat_lines
+EOF
         fi
         echo ""
     done

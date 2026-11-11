@@ -14,7 +14,7 @@ try {
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WorkspaceConf = Join-Path $ScriptDir "workspace.conf"
 
-$DefaultToolsVersion = "1.0.0"
+$DefaultToolsVersion = "1.0.1"
 $DefaultRepoUrl = "https://github.com/BullTronics/workspace-repo-tools"
 
 function Read-WrapperConfValue {
