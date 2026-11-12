@@ -6,6 +6,7 @@ $script:pidsDir = Join-Path $ScriptDir ".pids"
 $script:runnersDir = Join-Path $ScriptDir ".runners"
 $script:logsDir = Join-Path $ScriptDir "logs"
 $script:runningProcesses = @{}
+$script:ServiceExitCode = 0
 
 function Ensure-RuntimeDirs {
     foreach ($d in @($script:pidsDir, $script:runnersDir, $script:logsDir)) {
@@ -46,8 +47,22 @@ function Get-PortListenPids {
     param($Port)
     if (-not $Port) { return @() }
     try {
-        $conns = Get-NetTCPConnection -LocalPort ([int]$Port) -State Listen -ErrorAction SilentlyContinue
-        if ($conns) { return @($conns | Select-Object -ExpandProperty OwningProcess -Unique) }
+        if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+            $conns = Get-NetTCPConnection -LocalPort ([int]$Port) -State Listen -ErrorAction SilentlyContinue
+            if ($conns) { return @($conns | Select-Object -ExpandProperty OwningProcess -Unique) }
+        }
+    } catch {}
+    try {
+        $lines = & netstat.exe -ano -p TCP 2>$null
+        $found = @()
+        foreach ($line in $lines) {
+            if ($line -match '^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$') {
+                if ([int]$Matches[1] -eq [int]$Port -and [int]$Matches[2] -gt 0) {
+                    $found += [int]$Matches[2]
+                }
+            }
+        }
+        if ($found.Count -gt 0) { return @($found | Select-Object -Unique) }
     } catch {}
     return @()
 }
@@ -111,6 +126,7 @@ function Test-ScriptCommand {
 
 function Invoke-ServiceBody {
     param($svc)
+    $script:ServiceExitCode = 0
     Set-Location $svc.Dir
 
     if ($svc.Port) {
@@ -119,43 +135,60 @@ function Invoke-ServiceBody {
 
     if ($svc.LoadEnvFile) {
         $ok = Import-DotEnvFile -EnvPath (Join-Path $svc.Dir ".env")
-        if (-not $ok) { return 1 }
+        if (-not $ok) {
+            $script:ServiceExitCode = 1
+            return
+        }
     }
 
-    if ($svc.CmdWin) {
-        if (Test-ScriptCommand -Dir $svc.Dir -CmdWin $svc.CmdWin) {
-            $target = Join-Path $svc.Dir $svc.CmdWin
-            if ($svc.CmdWin -match '\.ps1$') { & $target }
-            else { & cmd.exe /c "`"$target`"" }
+    $global:LASTEXITCODE = 0
+    try {
+        if ($svc.CmdWin) {
+            if (Test-ScriptCommand -Dir $svc.Dir -CmdWin $svc.CmdWin) {
+                $target = Join-Path $svc.Dir $svc.CmdWin
+                & $target
+            } else {
+                & cmd.exe /c $svc.CmdWin
+            }
         } else {
-            & cmd.exe /c $svc.CmdWin
+            switch ($svc.RepoType) {
+                "spring-boot" { Invoke-TemplateSpringBoot }
+                "flutter-web" { Invoke-TemplateFlutterWeb }
+                "go"          { Invoke-TemplateGo }
+                "vite"        { Invoke-TemplateVite }
+                default {
+                    Write-Host "ERROR: No cmd_win or valid repo_type configured for '$($svc.Name)'." -ForegroundColor Red
+                    $script:ServiceExitCode = 1
+                    return
+                }
+            }
         }
-        return $LASTEXITCODE
-    }
 
-    switch ($svc.RepoType) {
-        "spring-boot" { Invoke-TemplateSpringBoot }
-        "flutter-web" { Invoke-TemplateFlutterWeb }
-        "go"          { Invoke-TemplateGo }
-        "vite"        { Invoke-TemplateVite }
-        default {
-            Write-Host "ERROR: No cmd_win or valid repo_type configured for '$($svc.Name)'." -ForegroundColor Red
-            return 1
+        if ($script:ServiceExitCode -ne 0) { return }
+        if ($null -ne $LASTEXITCODE -and [int]$LASTEXITCODE -ne 0) {
+            $script:ServiceExitCode = [int]$LASTEXITCODE
+        } elseif (-not $?) {
+            $script:ServiceExitCode = 1
+        } else {
+            $script:ServiceExitCode = 0
         }
+    } catch {
+        Write-Host "ERROR: Failed to run service '$($svc.Name)': $_" -ForegroundColor Red
+        $script:ServiceExitCode = 1
     }
-    return $LASTEXITCODE
 }
 
 function Invoke-ServiceEntrypoint {
     param([string]$Slug)
+    $script:ServiceExitCode = 1
     Load-ServicesCsv
     foreach ($svc in $script:services) {
         if ($svc.Slug -eq $Slug) {
-            return (Invoke-ServiceBody -svc $svc)
+            Invoke-ServiceBody -svc $svc
+            return
         }
     }
     Write-Host "Service '$Slug' not found." -ForegroundColor Red
-    return 1
 }
 
 function Write-ServiceStatus {
@@ -258,7 +291,9 @@ try { `$Host.UI.RawUI.WindowTitle = '$escTitle' } catch {}
 
 `$pidFile = '$escPidFile'
 `$isBg = $bgStr
-Set-Content -Path `$pidFile -Value `$PID -Force
+if (-not (Test-Path `$pidFile)) {
+    try { Set-Content -Path `$pidFile -Value `$PID -Force } catch {}
+}
 
 if (-not `$isBg) {
     Write-Host "=============================================================================" -ForegroundColor Cyan
@@ -271,11 +306,15 @@ if (-not `$isBg) {
     Write-Host ""
 }
 
-`$env:WORKSPACE_ROOT_DIR = '$escRoot'
-& '$escBundle' "__run-service" '$escSlug'
-`$exitCode = `$LASTEXITCODE
+`$exitCode = 0
+try {
+    `$env:WORKSPACE_ROOT_DIR = '$escRoot'
+    & '$escBundle' "__run-service" '$escSlug'
+    `$exitCode = if (`$null -ne `$LASTEXITCODE) { [int]`$LASTEXITCODE } else { 0 }
+} finally {
+    Remove-Item -Path `$pidFile -Force -ErrorAction SilentlyContinue
+}
 
-Remove-Item -Path `$pidFile -Force -ErrorAction SilentlyContinue
 if (-not `$isBg -and `$exitCode -ne 0) {
     Write-Host ""
     Write-Host "$escName exited with code `$exitCode." -ForegroundColor Red
@@ -341,7 +380,7 @@ function Start-ServiceEntry {
         $logFile = Join-Path $script:logsDir "${slug}_run.log"
         $errLogFile = Join-Path $script:logsDir "${slug}_run.err.log"
         $proc = Start-Process -FilePath $psExe `
-            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerFile `
+            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$runnerFile`"" `
             -WindowStyle Hidden `
             -RedirectStandardOutput $logFile `
             -RedirectStandardError $errLogFile `
@@ -352,10 +391,10 @@ function Start-ServiceEntry {
     } else {
         Write-Host "  Starting $label in new terminal window..." -ForegroundColor Cyan
         $proc = Start-Process -FilePath $psExe `
-            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerFile `
+            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$runnerFile`"" `
             -PassThru -WindowStyle Normal
         $script:runningProcesses[$slug] = $proc
-        if (-not (Test-Path $pidFile)) { Set-Content -Path $pidFile -Value $proc.Id -Force }
+        Set-Content -Path $pidFile -Value $proc.Id -Force
         Write-Host "  $label launched (PID: $($proc.Id))" -ForegroundColor Green
     }
     return $true
@@ -491,23 +530,35 @@ function Show-ServiceLogs {
     param([string]$TargetName, [int]$Lines = 20)
     if (-not $TargetName) {
         Write-Host "  Please specify a service. Available: $(Get-AvailableServicesText)" -ForegroundColor Red
-        return $false
+        $script:CommandSucceeded = $false
+        return
     }
     $svc = Find-ServiceByName -TargetName $TargetName
     if (-not $svc) {
         Write-Host "  Service '$TargetName' not found. Available: $(Get-AvailableServicesText)" -ForegroundColor Red
-        return $false
+        $script:CommandSucceeded = $false
+        return
     }
     $logFile = Join-Path $script:logsDir "$($svc.Slug)_run.log"
-    if (Test-Path $logFile) {
-        Write-Host "  === Last $Lines lines of $logFile ===" -ForegroundColor Cyan
-        Get-Content -Path $logFile -Tail $Lines
-        Write-Host ""
+    $errLogFile = Join-Path $script:logsDir "$($svc.Slug)_run.err.log"
+    $hasOut = Test-Path $logFile
+    $hasErr = (Test-Path $errLogFile) -and ((Get-Item $errLogFile).Length -gt 0)
+    if ($hasOut -or $hasErr) {
+        if ($hasOut) {
+            Write-Host "  === Last $Lines lines of $logFile ===" -ForegroundColor Cyan
+            Get-Content -Path $logFile -Tail $Lines
+            Write-Host ""
+        }
+        if ($hasErr) {
+            Write-Host "  === Last $Lines lines of $errLogFile ===" -ForegroundColor Yellow
+            Get-Content -Path $errLogFile -Tail $Lines
+            Write-Host ""
+        }
     } else {
         Write-Host "  No log file found at $logFile" -ForegroundColor Yellow
         Write-Host ""
     }
-    return $true
+    $script:CommandSucceeded = $true
 }
 
 function Resolve-TargetAndBg {

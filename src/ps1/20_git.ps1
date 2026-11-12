@@ -92,7 +92,8 @@ function Invoke-GitRepositories {
 
     if ($RepoFilter -and $matched -eq 0) {
         Write-Host "No repository matching '$RepoFilter' found in repos.csv." -ForegroundColor Red
-        return $false
+        $script:CommandSucceeded = $false
+        return
     }
 
     Write-Host ""
@@ -104,7 +105,7 @@ function Invoke-GitRepositories {
     Write-Host "Skipped    : $skipped"
     Write-Host "Failed     : $failed"
 
-    return ($failed -eq 0)
+    $script:CommandSucceeded = ($failed -eq 0)
 }
 
 function Get-GitRepositoriesStatus {
@@ -194,8 +195,9 @@ function Get-GitRepositoriesStatus {
 
     if ($targetRepo -and $repoFound -eq 0) {
         Write-Host "No repository matching '$targetRepo' found." -ForegroundColor Red
-        return $false
+        $script:CommandSucceeded = $false
+        return
     }
-    return $true
+    $script:CommandSucceeded = $true
 }
 

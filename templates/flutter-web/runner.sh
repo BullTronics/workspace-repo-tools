@@ -7,6 +7,9 @@ run_template_flutter_web() {
     local app_slug="${APP_SLUG:-$default_slug}"
     local web_port="${PORT:-3000}"
     local chrome_data="${CHROME_USER_DATA_DIR:-/tmp/${app_slug}-chrome-data}"
+    if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 ]] && command -v cygpath >/dev/null 2>&1; then
+        chrome_data=$(cygpath -w "$chrome_data")
+    fi
 
     local cmd_args=(-d chrome --web-port "$web_port" --web-browser-flag="--user-data-dir=$chrome_data")
     if [[ -f .env ]]; then

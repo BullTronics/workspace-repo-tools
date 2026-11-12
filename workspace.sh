@@ -14,42 +14,42 @@ WORKSPACE_CONF="$SCRIPT_DIR/workspace.conf"
 DEFAULT_TOOLS_VERSION="1.0.2"
 DEFAULT_REPO_URL="https://github.com/BullTronics/workspace-repo-tools"
 
-_trim() {
-    local v="$1"
-    v="${v#"${v%%[![:space:]]*}"}"
-    v="${v%"${v##*[![:space:]]}"}"
-    printf '%s' "$v"
-}
+TOOLS_VERSION=""
+TOOLS_REPO_URL=""
+TOOLS_RELEASE_BASE_URL=""
 
-_read_conf() {
-    local target="$1"
+_load_wrapper_conf() {
     [[ ! -f "$WORKSPACE_CONF" ]] && return 0
+    local raw line k v
     while IFS= read -r raw || [[ -n "$raw" ]]; do
-        local line
-        line=$(printf '%s' "$raw" | tr -d '\r')
-        line=$(_trim "$line")
+        line="${raw//$'\r'/}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
         [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
-        local k="${line%%=*}"
-        k=$(_trim "$k")
-        if [[ "$k" == "$target" ]]; then
-            local v="${line#*=}"
-            v=$(_trim "$v")
-            v="${v#\"}"; v="${v%\"}"
-            v="${v#\'}"; v="${v%\'}"
-            printf '%s' "$v"
-            return 0
-        fi
+        k="${line%%=*}"
+        k="${k#"${k%%[![:space:]]*}"}"
+        k="${k%"${k##*[![:space:]]}"}"
+        case "$k" in
+            TOOLS_VERSION|TOOLS_REPO_URL|TOOLS_RELEASE_BASE_URL)
+                v="${line#*=}"
+                v="${v#"${v%%[![:space:]]*}"}"
+                v="${v%"${v##*[![:space:]]}"}"
+                v="${v#\"}"; v="${v%\"}"
+                v="${v#\'}"; v="${v%\'}"
+                case "$k" in
+                    TOOLS_VERSION) [[ -z "$TOOLS_VERSION" ]] && TOOLS_VERSION="$v" ;;
+                    TOOLS_REPO_URL) [[ -z "$TOOLS_REPO_URL" ]] && TOOLS_REPO_URL="$v" ;;
+                    TOOLS_RELEASE_BASE_URL) [[ -z "$TOOLS_RELEASE_BASE_URL" ]] && TOOLS_RELEASE_BASE_URL="$v" ;;
+                esac
+                ;;
+        esac
     done < "$WORKSPACE_CONF"
 }
 
-TOOLS_VERSION=$(_read_conf "TOOLS_VERSION")
+_load_wrapper_conf
 [[ -z "$TOOLS_VERSION" ]] && TOOLS_VERSION="$DEFAULT_TOOLS_VERSION"
-
-TOOLS_REPO_URL=$(_read_conf "TOOLS_REPO_URL")
 [[ -z "$TOOLS_REPO_URL" ]] && TOOLS_REPO_URL="$DEFAULT_REPO_URL"
 TOOLS_REPO_URL="${TOOLS_REPO_URL%/}"
-
-TOOLS_RELEASE_BASE_URL=$(_read_conf "TOOLS_RELEASE_BASE_URL")
 TOOLS_RELEASE_BASE_URL="${TOOLS_RELEASE_BASE_URL%/}"
 
 if [[ -n "${WORKSPACE_RELEASE_URL:-}" ]]; then

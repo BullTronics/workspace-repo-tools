@@ -3,6 +3,7 @@
 # =============================================================================
 
 $script:BundleSelfPath = $MyInvocation.MyCommand.Path
+$script:CommandSucceeded = $true
 
 function Write-UnifiedBanner {
 @"
@@ -72,75 +73,94 @@ function Invoke-GitDispatch {
         if ($cur -in @("-r", "--repo", "-Repo")) {
             if ($i + 1 -ge $GitCmdArgs.Count -or -not $GitCmdArgs[$i + 1]) {
                 Write-Host "Option '$cur' requires a repository name." -ForegroundColor Red
-                return $false
+                $script:CommandSucceeded = $false
+                return
             }
             $repoFilter = $GitCmdArgs[$i + 1]; $i += 2; continue
         }
         if ($cur -like "--repo=*") {
             $repoFilter = $cur.Substring(7)
-            if (-not $repoFilter) { Write-Host "Option '--repo=' requires a repository name." -ForegroundColor Red; return $false }
+            if (-not $repoFilter) {
+                Write-Host "Option '--repo=' requires a repository name." -ForegroundColor Red
+                $script:CommandSucceeded = $false
+                return
+            }
             $i++; continue
         }
         break
     }
 
     $rem = if ($i -lt $GitCmdArgs.Count) { $GitCmdArgs[$i..($GitCmdArgs.Count - 1)] } else { @() }
-    if ($rem.Count -eq 0) { Show-UnifiedMenu; return $true }
+    if ($rem.Count -eq 0) { Show-UnifiedMenu; $script:CommandSucceeded = $true; return }
     $gcmd = $rem[0].ToLower()
     $gargs = if ($rem.Count -gt 1) { $rem[1..($rem.Count - 1)] } else { @() }
 
     switch ($gcmd) {
         "clone" {
-            if ($gargs.Count -ne 0) { Write-Host "Usage: .\workspace.bat [--repo <name>] clone" -ForegroundColor Red; return $false }
-            return (Invoke-GitRepositories -RepoFilter $repoFilter -CommandName "clone" -GitArgs @())
+            if ($gargs.Count -ne 0) {
+                Write-Host "Usage: .\workspace.bat [--repo <name>] clone" -ForegroundColor Red
+                $script:CommandSucceeded = $false
+                return
+            }
+            Invoke-GitRepositories -RepoFilter $repoFilter -CommandName "clone" -GitArgs @()
         }
         { $_ -in @("pull", "fetch") } {
-            return (Invoke-GitRepositories -RepoFilter $repoFilter -CommandName $gcmd -GitArgs $gargs)
+            Invoke-GitRepositories -RepoFilter $repoFilter -CommandName $gcmd -GitArgs $gargs
         }
         { $_ -in @("repo-status", "repos", "status") } {
-            return (Get-GitRepositoriesStatus -RepoFilter $repoFilter -StatusArgs $gargs)
+            Get-GitRepositoriesStatus -RepoFilter $repoFilter -StatusArgs $gargs
         }
         "log" {
-            return (Invoke-GitRepositories -RepoFilter $repoFilter -CommandName "log" -GitArgs (@("--oneline", "-1") + $gargs))
+            Invoke-GitRepositories -RepoFilter $repoFilter -CommandName "log" -GitArgs (@("--oneline", "-1") + $gargs)
         }
         "branch" {
-            return (Invoke-GitRepositories -RepoFilter $repoFilter -CommandName "branch" -GitArgs (@("--show-current") + $gargs))
+            Invoke-GitRepositories -RepoFilter $repoFilter -CommandName "branch" -GitArgs (@("--show-current") + $gargs)
         }
         "checkout" {
-            if ($gargs.Count -ne 1) { Write-Host "Usage: .\workspace.bat [--repo <name>] checkout <branch>" -ForegroundColor Red; return $false }
-            return (Invoke-GitRepositories -RepoFilter $repoFilter -CommandName "checkout" -GitArgs $gargs)
+            if ($gargs.Count -ne 1) {
+                Write-Host "Usage: .\workspace.bat [--repo <name>] checkout <branch>" -ForegroundColor Red
+                $script:CommandSucceeded = $false
+                return
+            }
+            Invoke-GitRepositories -RepoFilter $repoFilter -CommandName "checkout" -GitArgs $gargs
         }
         "exec" {
-            if ($gargs.Count -eq 0) { Write-Host "Usage: .\workspace.bat [--repo <name>] exec <git-command> [args...]" -ForegroundColor Red; return $false }
+            if ($gargs.Count -eq 0) {
+                Write-Host "Usage: .\workspace.bat [--repo <name>] exec <git-command> [args...]" -ForegroundColor Red
+                $script:CommandSucceeded = $false
+                return
+            }
             $subArgs = if ($gargs.Count -gt 1) { $gargs[1..($gargs.Count - 1)] } else { @() }
-            return (Invoke-GitRepositories -RepoFilter $repoFilter -CommandName $gargs[0] -GitArgs $subArgs)
+            Invoke-GitRepositories -RepoFilter $repoFilter -CommandName $gargs[0] -GitArgs $subArgs
         }
         default {
             Write-Host "Unknown git subcommand: '$gcmd'" -ForegroundColor Red
-            return $false
+            $script:CommandSucceeded = $false
         }
     }
 }
 
 function Invoke-WorkspaceCommand {
     param([string[]]$CmdArgs)
-    if (-not $CmdArgs -or $CmdArgs.Count -eq 0) { return $true }
+    $script:CommandSucceeded = $true
+    if (-not $CmdArgs -or $CmdArgs.Count -eq 0) { return }
 
     $rawFirst = $CmdArgs[0]
     $first = $rawFirst.ToLower()
     $rest = if ($CmdArgs.Count -gt 1) { $CmdArgs[1..($CmdArgs.Count - 1)] } else { @() }
 
     if ($first -in @("-r", "--repo", "-repo") -or $first -like "--repo=*") {
-        return (Invoke-GitDispatch -GitCmdArgs $CmdArgs)
+        Invoke-GitDispatch -GitCmdArgs $CmdArgs
+        return
     }
 
     switch ($first) {
         "git" {
-            if ($rest.Count -eq 0) { Show-UnifiedMenu; return $true }
-            return (Invoke-GitDispatch -GitCmdArgs $rest)
+            if ($rest.Count -eq 0) { Show-UnifiedMenu; return }
+            Invoke-GitDispatch -GitCmdArgs $rest
         }
         { $_ -in @("clone", "pull", "fetch", "repo-status", "repos", "log", "branch", "checkout", "exec") } {
-            return (Invoke-GitDispatch -GitCmdArgs $CmdArgs)
+            Invoke-GitDispatch -GitCmdArgs $CmdArgs
         }
         "start" {
             $a1 = if ($rest.Count -gt 0) { $rest[0] } else { "" }
@@ -155,7 +175,7 @@ function Invoke-WorkspaceCommand {
                 else { Write-Host "  Service '$($parsed.Target)' not found. Available: $(Get-AvailableServicesText)" -ForegroundColor Red; $ok = $false }
             }
             Write-ServiceStatus
-            return $ok
+            $script:CommandSucceeded = $ok
         }
         "stop" {
             $a1 = if ($rest.Count -gt 0) { $rest[0] } else { "" }
@@ -168,7 +188,7 @@ function Invoke-WorkspaceCommand {
                 else { Write-Host "  Service '$a1' not found. Available: $(Get-AvailableServicesText)" -ForegroundColor Red; $ok = $false }
             }
             Write-ServiceStatus
-            return $ok
+            $script:CommandSucceeded = $ok
         }
         "restart" {
             $a1 = if ($rest.Count -gt 0) { $rest[0] } else { "" }
@@ -185,40 +205,36 @@ function Invoke-WorkspaceCommand {
                 else { Write-Host "  Service '$($parsed.Target)' not found. Available: $(Get-AvailableServicesText)" -ForegroundColor Red; $ok = $false }
             }
             Write-ServiceStatus
-            return $ok
+            $script:CommandSucceeded = $ok
         }
         "force-stop" {
             Force-StopAllServices
-            return $true
         }
         "status" {
             Write-ServiceStatus
-            return $true
         }
         "logs" {
             $a1 = if ($rest.Count -gt 0) { $rest[0] } else { "" }
             $lines = if ($rest.Count -gt 1 -and $rest[1] -match '^\d+$') { [int]$rest[1] } else { 20 }
-            return (Show-ServiceLogs -TargetName $a1 -Lines $lines)
+            Show-ServiceLogs -TargetName $a1 -Lines $lines
         }
         { $_ -in @("check-update", "update-check") } {
-            return (Invoke-CheckUpdateCommand)
+            $script:CommandSucceeded = Invoke-CheckUpdateCommand
         }
         { $_ -in @("update", "upgrade") } {
-            return (Invoke-UpdateCommand -UpdateArgs $rest)
+            $script:CommandSucceeded = Invoke-UpdateCommand -UpdateArgs $rest
         }
         "version" {
             Write-Host "workspace-repo-tools v$($script:ToolsVersion) (schema: $($script:ConfigSchemaVersion), bundle: $($script:BundleVersion))"
-            return $true
         }
         { $_ -in @("help", "-h", "--help") } {
             Write-UnifiedBanner
             Invoke-UpdateBannerCheck -Mode "--bg"
             Show-UnifiedMenu
-            return $true
         }
         default {
             Write-Host "Unknown command: '$rawFirst'. Run '.\workspace.bat help' for usage." -ForegroundColor Red
-            return $false
+            $script:CommandSucceeded = $false
         }
     }
 }
@@ -227,8 +243,8 @@ function Invoke-WorkspaceCommand {
 if ($args.Count -gt 0) {
     if ($args[0] -eq "__run-service") {
         $slugArg = if ($args.Count -gt 1) { $args[1] } else { "" }
-        $rc = Invoke-ServiceEntrypoint -Slug $slugArg
-        exit $rc
+        Invoke-ServiceEntrypoint -Slug $slugArg
+        exit $script:ServiceExitCode
     }
     if ($args[0] -eq "__refresh-cache") {
         $null = Refresh-UpdateCache -TimeoutSec 3
@@ -238,12 +254,12 @@ if ($args.Count -gt 0) {
 
 # --- Direct CLI Mode ---
 if ($args.Count -gt 0) {
-    $ok = Invoke-WorkspaceCommand -CmdArgs $args
+    Invoke-WorkspaceCommand -CmdArgs $args
     $firstLc = $args[0].ToLower()
     if ($firstLc -notin @("help", "-h", "--help", "check-update", "update-check", "update", "upgrade", "version")) {
         Invoke-UpdateBannerCheck -Mode "--bg"
     }
-    if (-not $ok) { exit 1 }
+    if (-not $script:CommandSucceeded) { exit 1 }
     exit 0
 }
 
@@ -257,13 +273,6 @@ $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
 
 try {
     [Console]::TreatControlCAsInput = $false
-    Register-ObjectEvent -InputObject ([Console]) -EventName CancelKeyPress -Action {
-        $event.Cancel = $true
-        Write-Host "`n  Ctrl+C detected. Cleaning up..." -ForegroundColor Yellow
-        if (Test-ActivePids) { Stop-AllServices }
-        Write-Host "  Goodbye!" -ForegroundColor Cyan
-        exit 0
-    } -ErrorAction SilentlyContinue | Out-Null
 } catch {}
 
 Write-UnifiedBanner
@@ -271,22 +280,25 @@ Invoke-UpdateBannerCheck -Mode "sync"
 $env:WORKSPACE_UPDATE_CHECKED = "1"
 Show-UnifiedMenu
 
-while ($true) {
-    Write-Host "  $($script:WorkspacePrompt)> " -NoNewline -ForegroundColor Cyan
-    $line = Read-Host
-    if ($null -eq $line) { break }
-    $trimmed = $line.Trim()
-    if (-not $trimmed) { continue }
+try {
+    while ($true) {
+        Write-Host "  $($script:WorkspacePrompt)> " -NoNewline -ForegroundColor Cyan
+        $line = Read-Host
+        if ($null -eq $line) { break }
+        $trimmed = $line.Trim()
+        if (-not $trimmed) { continue }
 
-    $parts = $trimmed -split '\s+'
-    if ($parts[0].ToLower() -in @("quit", "exit", "q")) {
-        if (Test-ActivePids) { Stop-AllServices }
-        Write-Host "  Goodbye!" -ForegroundColor Cyan
-        Write-Host ""
-        exit 0
+        $parts = $trimmed -split '\s+'
+        if ($parts[0].ToLower() -in @("quit", "exit", "q")) {
+            break
+        }
+
+        Invoke-WorkspaceCommand -CmdArgs $parts
     }
-
-    $null = Invoke-WorkspaceCommand -CmdArgs $parts
+} finally {
+    if (Test-ActivePids) { Stop-AllServices }
+    Write-Host "  Goodbye!" -ForegroundColor Cyan
+    Write-Host ""
 }
 exit 0
 

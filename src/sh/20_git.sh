@@ -26,9 +26,10 @@ run_git_repositories() {
 
     while IFS=',' read -r raw_url raw_path raw_branch _extra; do
         local url path branch
-        url=$(trim_ws "$raw_url")
-        path=$(trim_ws "$raw_path")
-        branch=$(trim_ws "${raw_branch:-}")
+        url="${raw_url#"${raw_url%%[![:space:]]*}"}"; url="${url%"${url##*[![:space:]]}"}"
+        path="${raw_path#"${raw_path%%[![:space:]]*}"}"; path="${path%"${path##*[![:space:]]}"}"
+        branch="${raw_branch:-}"
+        branch="${branch#"${branch%%[![:space:]]*}"}"; branch="${branch%"${branch##*[![:space:]]}"}"
 
         [[ -z "$url" && -z "$path" ]] && continue
         total=$((total + 1))
@@ -101,7 +102,7 @@ run_git_repositories() {
             continue
         fi
 
-        if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+        if [[ ! -d "$repo_path" ]] || { [[ ! -e "$repo_path/.git" ]] && ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; }; then
             warning "Repository not found: $repo_path"
             warning "Run './workspace.sh clone' first."
             skipped=$((skipped + 1))
@@ -163,8 +164,8 @@ status_git_repositories() {
 
     while IFS=',' read -r raw_url raw_path _raw_branch _extra; do
         local url path
-        url=$(trim_ws "$raw_url")
-        path=$(trim_ws "$raw_path")
+        url="${raw_url#"${raw_url%%[![:space:]]*}"}"; url="${url%"${url##*[![:space:]]}"}"
+        path="${raw_path#"${raw_path%%[![:space:]]*}"}"; path="${path%"${path##*[![:space:]]}"}"
         [[ -z "$url" && -z "$path" ]] && continue
         row_num=$((row_num + 1))
         validate_rel_path "$path" "$row_num" >/dev/null 2>&1 || continue
@@ -181,7 +182,7 @@ status_git_repositories() {
             printf '%s\n' "URL        : $url"
             printf '%s\n' "============================================================"
 
-            if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+            if [[ ! -d "$repo_path" ]] || { [[ ! -e "$repo_path/.git" ]] && ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; }; then
                 warning "Repository not found: $repo_path"
                 warning "Run './workspace.sh clone' first."
                 continue
@@ -192,7 +193,7 @@ status_git_repositories() {
             continue
         fi
 
-        if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+        if [[ ! -d "$repo_path" ]] || { [[ ! -e "$repo_path/.git" ]] && ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; }; then
             if [[ $show_all -eq 1 ]]; then
                 printf '%s\n' "$path - not cloned"
             fi

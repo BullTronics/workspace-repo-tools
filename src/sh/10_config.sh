@@ -17,28 +17,44 @@ DISABLE_AUTO_UPDATE_CHECK="false"
 UPDATE_CHECK_INTERVAL_HOURS="24"
 
 load_workspace_conf() {
-    local v
     if [[ -f "$WORKSPACE_CONF" ]]; then
-        v=$(read_kv_value "$WORKSPACE_CONF" "WORKSPACE_NAME");   [[ -n "$v" ]] && WORKSPACE_NAME="$v"
-        v=$(read_kv_value "$WORKSPACE_CONF" "WORKSPACE_PROMPT"); [[ -n "$v" ]] && WORKSPACE_PROMPT="$v"
-        v=$(read_kv_value "$WORKSPACE_CONF" "WORKSPACE_DIR");    [[ -n "$v" ]] && WORKSPACE_REL_DIR="$v"
-        v=$(read_kv_value "$WORKSPACE_CONF" "TOOLS_VERSION");    [[ -n "$v" ]] && TOOLS_VERSION="$v"
-        v=$(read_kv_value "$WORKSPACE_CONF" "CONFIG_SCHEMA_VERSION"); [[ -n "$v" ]] && CONFIG_SCHEMA_VERSION="$v"
-        v=$(read_kv_value "$WORKSPACE_CONF" "TOOLS_REPO_URL");   [[ -n "$v" ]] && TOOLS_REPO_URL="${v%/}"
-        v=$(read_kv_value "$WORKSPACE_CONF" "TOOLS_RELEASE_BASE_URL"); [[ -n "$v" ]] && TOOLS_RELEASE_BASE_URL="${v%/}"
-
-        v=$(read_kv_value "$WORKSPACE_CONF" "DISABLE_AUTO_UPDATE_CHECK")
-        if [[ -n "$v" ]]; then
-            v=$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')
-            if [[ "$v" == "true" || "$v" == "false" ]]; then
-                DISABLE_AUTO_UPDATE_CHECK="$v"
+        local raw_line line k v
+        while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+            line="${raw_line//$'\r'/}"
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+            k="${line%%=*}"
+            k="${k#"${k%%[![:space:]]*}"}"
+            k="${k%"${k##*[![:space:]]}"}"
+            v="${line#*=}"
+            v="${v#"${v%%[![:space:]]*}"}"
+            v="${v%"${v##*[![:space:]]}"}"
+            if [[ "$v" == \"*\" && "$v" == *\" && ${#v} -ge 2 ]]; then
+                v="${v#\"}"; v="${v%\"}"
+            elif [[ "$v" == \'*\' && "$v" == *\' && ${#v} -ge 2 ]]; then
+                v="${v#\'}"; v="${v%\'}"
             fi
-        fi
-
-        v=$(read_kv_value "$WORKSPACE_CONF" "UPDATE_CHECK_INTERVAL_HOURS")
-        if [[ -n "$v" && "$v" =~ ^[0-9]+$ ]]; then
-            UPDATE_CHECK_INTERVAL_HOURS="$v"
-        fi
+            [[ -z "$v" ]] && continue
+            case "$k" in
+                WORKSPACE_NAME)             WORKSPACE_NAME="$v" ;;
+                WORKSPACE_PROMPT)           WORKSPACE_PROMPT="$v" ;;
+                WORKSPACE_DIR)              WORKSPACE_REL_DIR="$v" ;;
+                TOOLS_VERSION)              TOOLS_VERSION="$v" ;;
+                CONFIG_SCHEMA_VERSION)      CONFIG_SCHEMA_VERSION="$v" ;;
+                TOOLS_REPO_URL)             TOOLS_REPO_URL="${v%/}" ;;
+                TOOLS_RELEASE_BASE_URL)     TOOLS_RELEASE_BASE_URL="${v%/}" ;;
+                DISABLE_AUTO_UPDATE_CHECK)
+                    case "$v" in
+                        true|TRUE|True)   DISABLE_AUTO_UPDATE_CHECK="true" ;;
+                        false|FALSE|False) DISABLE_AUTO_UPDATE_CHECK="false" ;;
+                    esac
+                    ;;
+                UPDATE_CHECK_INTERVAL_HOURS)
+                    [[ "$v" =~ ^[0-9]+$ ]] && UPDATE_CHECK_INTERVAL_HOURS="$v"
+                    ;;
+            esac
+        done < "$WORKSPACE_CONF"
     fi
 
     case "$WORKSPACE_REL_DIR" in
@@ -100,18 +116,18 @@ prepare_repos_rows() {
     local header_found=0
     : > "$out_file"
 
+    local raw_line line trimmed
     while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-        local line trimmed
-        line=$(printf '%s' "$raw_line" | tr -d '\r')
-        trimmed=$(trim_ws "$line")
+        line="${raw_line//$'\r'/}"
+        trimmed="${line#"${line%%[![:space:]]*}"}"
+        trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
         case "$trimmed" in
             ""|\#*) continue ;;
         esac
 
         if [[ "$header_found" -eq 0 ]]; then
             header_found=1
-            local norm_h
-            norm_h=$(printf '%s' "$trimmed" | tr -d '[:space:]')
+            local norm_h="${trimmed//[[:space:]]/}"
             if [[ "$norm_h" != "url,path" && "$norm_h" != "url,path,branch" ]]; then
                 error "Invalid repos.csv header. Expected 'url,path' or 'url,path,branch', found: $trimmed"
                 exit 1
@@ -135,6 +151,7 @@ SVC_PATHS=()
 SVC_TYPES=()
 SVC_PORTS=()
 SVC_CMD_UNIX=()
+SVC_CMD_WIN=()
 SVC_LOAD_ENV=()
 SVC_STOP_PATTERNS=()
 SVC_HINTS=()
@@ -164,6 +181,7 @@ load_services_csv() {
     SVC_TYPES=()
     SVC_PORTS=()
     SVC_CMD_UNIX=()
+    SVC_CMD_WIN=()
     SVC_LOAD_ENV=()
     SVC_STOP_PATTERNS=()
     SVC_HINTS=()
@@ -231,7 +249,7 @@ load_services_csv() {
     [[ -z "$parsed" ]] && return 0
 
     local row_idx=0
-    while IFS="$us" read -r s_name s_emoji s_path s_type s_port s_cmd_unix _s_cmd_win s_load_env s_stop_pat s_hints _end; do
+    while IFS="$us" read -r s_name s_emoji s_path s_type s_port s_cmd_unix s_cmd_win s_load_env s_stop_pat s_hints _end; do
         row_idx=$((row_idx + 1))
         if [[ -z "$s_name" ]]; then
             error "services.csv row $row_idx is missing 'name'."
@@ -306,6 +324,7 @@ load_services_csv() {
         SVC_TYPES+=("$norm_type")
         SVC_PORTS+=("$s_port")
         SVC_CMD_UNIX+=("$s_cmd_unix")
+        SVC_CMD_WIN+=("$s_cmd_win")
         SVC_LOAD_ENV+=("$load_norm")
         SVC_STOP_PATTERNS+=("$s_stop_pat")
         SVC_HINTS+=("$s_hints")

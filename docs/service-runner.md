@@ -64,8 +64,9 @@ When `start` runs for a service:
 
 Inside `execute_service_body` / `Invoke-ServiceBody`:
 1. If `cmd_unix` (or `cmd_win`) is non-empty:
-   - If single token without whitespace referencing a script (`.sh` on Unix; `.bat`/`.cmd`/`.ps1` on Windows; or existing file in service dir), executes that script directly (`bash <script>`, `& <script.ps1>`, or `cmd.exe /c`).
+   - If single token without whitespace referencing a script (`.sh` on Unix; `.bat`/`.cmd`/`.ps1` on Windows; or existing file in service dir), executes that script directly (`bash <script>`, `& <script.ps1>`, or `& <script.bat/.cmd>`).
    - Otherwise executes the value as an inline shell command (`bash -c "$cmd_spec"` or `cmd.exe /c $cmd_win`).
+   - On Windows Git Bash (`OSTYPE` matching `msys*`, `cygwin*`, or `mingw*`), if `cmd_unix` is empty and `cmd_win` is set, it falls back to `cmd_win`.
 2. If `cmd_unix` / `cmd_win` is empty:
    - Dispatches directly to the embedded `repo_type` template function (`run_template_*` / `Invoke-Template*`).
    - Fails cleanly if `repo_type` is `custom`.
@@ -78,17 +79,17 @@ Note for single-service Bash commands (`start <svc>`, `stop <svc>`, `restart <sv
 
 ### Launch Modes (`start` / `restart`)
 - **Default (interactive terminal window/tab):**
-  - Generates `.runners/run_<slug>.command` (Unix) or `.runners/run_<slug>.ps1` (Windows) containing window title formatting, `.pids/<slug>.pid` registration, service hints display, `WORKSPACE_ROOT_DIR` export, and `<bundle> __run-service <slug>`.
-  - Opens a new tab/window via AppleScript (`iTerm2` / `Terminal.app`), macOS `open -a Terminal`, common Linux terminal emulators (`gnome-terminal`, `konsole`, `alacritty`, etc. with headless fallback to background logging), or `Start-Process` PowerShell window on Windows.
+  - Generates `.runners/run_<slug>.command` (Unix / Git Bash) or `.runners/run_<slug>.ps1` (Windows PowerShell) containing window title formatting, `.pids/<slug>.pid` registration, service hints display, `WORKSPACE_ROOT_DIR` export, and `<bundle> __run-service <slug>`.
+  - Opens a new tab/window via AppleScript (`iTerm2` / `Terminal.app`), macOS `open -a Terminal`, `mintty` / `Start-Process` / `cmd.exe /c start` on Windows Git Bash, common Linux terminal emulators (`gnome-terminal`, `konsole`, `alacritty`, etc. with headless fallback to background logging), or `Start-Process` PowerShell window on Windows.
 - **Background (`--bg`):**
-  - Redirects stdout/stderr into `logs/<slug>_run.log` (plus `<slug>_run.err.log` on Windows), records the runner PID in `.pids/<slug>.pid`, and detaches (`disown` on Unix, `-WindowStyle Hidden` on Windows).
+  - Redirects stdout/stderr into `logs/<slug>_run.log` (plus `<slug>_run.err.log` on Windows PowerShell, surfaced by `logs <svc>`), records the runner PID (Win32 PID on Windows & Windows Git Bash) in `.pids/<slug>.pid`, and detaches (`disown` on Unix, detached `Start-Process -WindowStyle Hidden` on Windows & Windows Git Bash).
 
 ### Status Detection (`write_service_status` / `Write-ServiceStatus`)
-- Checks TCP listeners via `lsof -tiTCP:<port> -sTCP:LISTEN` -> `ss -tlnp` fallback (Unix) or `Get-NetTCPConnection -State Listen` -> `netstat -ano` fallback (Windows), plus `.pids/<slug>.pid` liveness:
+- Checks TCP listeners via `lsof -tiTCP:<port> -sTCP:LISTEN` -> `ss -tlnp` fallback (Unix), `netstat.exe -ano -p TCP` (Windows Git Bash), or `Get-NetTCPConnection -State Listen` -> `netstat.exe -ano -p TCP` fallback (Windows PowerShell), plus `.pids/<slug>.pid` liveness:
   - **Ported service**: `[RUNNING]` if TCP port is listening; `[STARTING...]` if runner PID is alive but port is not listening yet; `[STOPPED]` otherwise.
   - **Portless service**: `[RUNNING]` if runner PID is alive; `[STOPPED]` otherwise.
 
 ### Graceful `stop` vs `force-stop`
-- **`stop [svc]`**: Walks process descendants recursively (`pgrep -P` / `ps` on Unix via `kill_pid_tree` -> `SIGTERM` then `SIGKILL` after 1s; `taskkill /T /F` on Windows via `Stop-PidTree`), then terminates any listener PID on the configured port and removes `.pids/<slug>.pid`.
-- **`force-stop`**: Runs `stop` across all configured services, then performs an orphan sweep across every configured TCP port (`force_kill_port` / `Force-KillByPort`) and every `;`-separated pattern in `stop_pattern` (`pgrep -f` / `ps aux` or `Win32_Process` `CommandLine` match), clearing remaining `.pids/*.pid`.
+- **`stop [svc]`**: Walks process descendants recursively (`pgrep -P` / `ps` on Unix via `kill_pid_tree` -> `SIGTERM` then `SIGKILL` after 1s; `taskkill.exe /T /F` on Windows & Windows Git Bash), then terminates any listener PID on the configured port and removes `.pids/<slug>.pid`.
+- **`force-stop`**: Runs `stop` across all configured services, then performs an orphan sweep across every configured TCP port (`force_kill_port` / `Force-KillByPort`) and every `;`-separated pattern in `stop_pattern` (`pgrep -f` / `ps aux` on Unix, `Win32_Process` `CommandLine` match via `Get-CimInstance` on Windows & Windows Git Bash), clearing remaining `.pids/*.pid`.
 

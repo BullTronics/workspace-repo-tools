@@ -91,14 +91,21 @@ check_for_updates_banner() {
     now=$(date +%s)
     interval_secs=$((UPDATE_CHECK_INTERVAL_HOURS * 3600))
 
-    local last_check last_attempt remote_ver update_avail
-    last_check=$(read_kv_value "$UPDATE_CACHE_FILE" "LAST_CHECK_EPOCH")
-    last_attempt=$(read_kv_value "$UPDATE_CACHE_FILE" "LAST_ATTEMPT_EPOCH")
-    remote_ver=$(read_kv_value "$UPDATE_CACHE_FILE" "REMOTE_VERSION")
-    update_avail=$(read_kv_value "$UPDATE_CACHE_FILE" "UPDATE_AVAILABLE")
-
-    [[ -z "$last_check" || ! "$last_check" =~ ^[0-9]+$ ]] && last_check=0
-    [[ -z "$last_attempt" || ! "$last_attempt" =~ ^[0-9]+$ ]] && last_attempt=0
+    local last_check="0" last_attempt="0" remote_ver="" update_avail="false"
+    if [[ -f "$UPDATE_CACHE_FILE" ]]; then
+        local raw_line line k v
+        while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+            line="${raw_line//$'\r'/}"
+            [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+            k="${line%%=*}"; v="${line#*=}"
+            case "$k" in
+                LAST_CHECK_EPOCH)   [[ "$v" =~ ^[0-9]+$ ]] && last_check="$v" ;;
+                LAST_ATTEMPT_EPOCH) [[ "$v" =~ ^[0-9]+$ ]] && last_attempt="$v" ;;
+                REMOTE_VERSION)     remote_ver="$v" ;;
+                UPDATE_AVAILABLE)   update_avail="$v" ;;
+            esac
+        done < "$UPDATE_CACHE_FILE"
+    fi
 
     local needs_refresh=0
     if [[ $last_check -eq 0 || $((now - last_check)) -ge $interval_secs ]]; then

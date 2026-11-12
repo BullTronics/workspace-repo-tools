@@ -6,6 +6,11 @@
 BUNDLE_VERSION="@VERSION@"
 BUNDLE_SCHEMA_VERSION="@CONFIG_SCHEMA_VERSION@"
 
+IS_WINDOWS_BASH=0
+case "${OSTYPE:-}" in
+    msys*|cygwin*|mingw*) IS_WINDOWS_BASH=1 ;;
+esac
+
 if [[ -n "${WORKSPACE_ROOT_DIR:-}" ]]; then
     SCRIPT_DIR=$(cd "$WORKSPACE_ROOT_DIR" && pwd)
 elif [[ "$(basename "$(dirname "$0")")" == ".workspace-tools" ]]; then
@@ -54,6 +59,12 @@ trim_ws() {
     printf '%s' "$val"
 }
 
+_trim_inplace() {
+    _TRIMMED="$1"
+    _TRIMMED="${_TRIMMED#"${_TRIMMED%%[![:space:]]*}"}"
+    _TRIMMED="${_TRIMMED%"${_TRIMMED##*[![:space:]]}"}"
+}
+
 strip_outer_quotes() {
     local val="$1"
     if [[ "$val" == \"*\" && "$val" == *\" && ${#val} -ge 2 ]]; then
@@ -75,17 +86,20 @@ read_kv_value() {
     local target_key="$2"
     [[ ! -f "$file" ]] && return 0
 
+    local raw_line line key val
     while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
-        local line
-        line=$(printf '%s' "$raw_line" | tr -d '\r')
-        line=$(trim_ws "$line")
+        line="${raw_line//$'\r'/}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
         [[ -z "$line" || "$line" == \#* ]] && continue
         if [[ "$line" == *=* ]]; then
-            local key="${line%%=*}"
-            local val="${line#*=}"
-            key=$(trim_ws "$key")
+            key="${line%%=*}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
             if [[ "$key" == "$target_key" ]]; then
-                val=$(trim_ws "$val")
+                val="${line#*=}"
+                val="${val#"${val%%[![:space:]]*}"}"
+                val="${val%"${val##*[![:space:]]}"}"
                 strip_outer_quotes "$val"
                 return 0
             fi

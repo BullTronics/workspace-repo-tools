@@ -86,7 +86,7 @@ function Invoke-UpdateBannerCheck {
     if ($needsRefresh) {
         if ($Mode -eq "--bg") {
             $psExe = Get-PowerShellExe
-            Start-Process -FilePath $psExe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script:BundleSelfPath, "__refresh-cache" -WindowStyle Hidden | Out-Null
+            Start-Process -FilePath $psExe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$($script:BundleSelfPath)`"", "__refresh-cache" -WindowStyle Hidden | Out-Null
         } else {
             $null = Refresh-UpdateCache -TimeoutSec 2
             $cache = Read-KvFile -FilePath $script:UpdateCacheFile

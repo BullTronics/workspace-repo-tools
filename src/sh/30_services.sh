@@ -55,11 +55,41 @@ get_service_port() {
 get_port_listen_pids() {
     local port="$1"
     [[ -z "$port" ]] && return 0
-    if command -v lsof >/dev/null 2>&1; then
+    if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 ]] && command -v netstat.exe >/dev/null 2>&1; then
+        netstat.exe -ano -p TCP 2>/dev/null | awk -v port="$port" '
+            { gsub(/\r/, "") }
+            $1 == "TCP" && $4 == "LISTENING" {
+                n = split($2, a, ":")
+                if (a[n] == port && $5 ~ /^[0-9]+$/ && $5 > 0) print $5
+            }
+        ' | sort -u
+    elif command -v lsof >/dev/null 2>&1; then
         lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null
     elif command -v ss >/dev/null 2>&1; then
         ss -tlnp "sport = :$port" 2>/dev/null | awk 'match($0, /pid=[0-9]+/) { print substr($0, RSTART + 4, RLENGTH - 4) }' | sort -u
     fi
+}
+
+is_pid_alive() {
+    local pid="$1"
+    [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]] && return 1
+    if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 ]]; then
+        local f wp
+        for f in /proc/*/winpid; do
+            [[ -r "$f" ]] || continue
+            read -r wp < "$f" 2>/dev/null || continue
+            wp="${wp//[[:space:]]/}"
+            if [[ "$wp" == "$pid" ]]; then
+                return 0
+            fi
+        done
+        if command -v tasklist.exe >/dev/null 2>&1; then
+            MSYS_NO_PATHCONV=1 tasklist.exe /FI "PID eq $pid" /NH 2>/dev/null | grep -qE "(^|[[:space:]])${pid}([[:space:]]|$)"
+            return $?
+        fi
+        return 1
+    fi
+    kill -0 "$pid" 2>/dev/null
 }
 
 get_service_pids() {
@@ -79,7 +109,7 @@ get_service_pids() {
     if [[ -f "$pid_file" ]]; then
         local saved_pid
         saved_pid=$(tr -d '[:space:]' < "$pid_file" 2>/dev/null)
-        if [[ -n "$saved_pid" ]] && kill -0 "$saved_pid" 2>/dev/null; then
+        if is_pid_alive "$saved_pid"; then
             pids+=("$saved_pid")
         fi
     fi
@@ -138,6 +168,7 @@ execute_service_body() {
     local repo_type="${SVC_TYPES[$idx]}"
     local default_port="${SVC_PORTS[$idx]}"
     local cmd_spec="${SVC_CMD_UNIX[$idx]}"
+    local cmd_win_spec="${SVC_CMD_WIN[$idx]}"
     local load_env="${SVC_LOAD_ENV[$idx]}"
     local full_path
     full_path=$(get_service_full_path "$rel_path")
@@ -163,6 +194,19 @@ execute_service_body() {
             fi
         else
             bash -c "$cmd_spec"
+        fi
+        return $?
+    fi
+
+    if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 && -n "$cmd_win_spec" ]]; then
+        if [[ "$cmd_win_spec" != *[[:space:]]* && ( "$cmd_win_spec" == *.bat || "$cmd_win_spec" == *.cmd || -f "$full_path/$cmd_win_spec" ) ]]; then
+            if [[ "$cmd_win_spec" == *.ps1 ]]; then
+                powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$full_path/$cmd_win_spec"
+            else
+                MSYS_NO_PATHCONV=1 cmd.exe /c "$cmd_win_spec"
+            fi
+        else
+            MSYS_NO_PATHCONV=1 cmd.exe /c "$cmd_win_spec"
         fi
         return $?
     fi
@@ -226,7 +270,7 @@ write_service_status() {
             if [[ -f "$pid_file" ]]; then
                 local sp
                 sp=$(tr -d '[:space:]' < "$pid_file" 2>/dev/null)
-                if [[ -n "$sp" ]] && kill -0 "$sp" 2>/dev/null; then
+                if is_pid_alive "$sp"; then
                     runner_pid="$sp"
                 fi
             fi
@@ -315,7 +359,11 @@ ROOT_DIR=$q_root
 SVC_SLUG=$q_slug
 
 printf '\033]0;%s\007' "\$TITLE"
-echo \$\$ > "\$PID_FILE"
+if [[ -r /proc/\$\$/winpid ]]; then
+    tr -d '[:space:]' < /proc/\$\$/winpid > "\$PID_FILE"
+else
+    echo \$\$ > "\$PID_FILE"
+fi
 
 cleanup_runner() {
     rm -f "\$PID_FILE"
@@ -356,6 +404,31 @@ EOF
 launch_terminal() {
     local slug="$1"
     local runner_file="$2"
+    local title="${3:-$slug}"
+
+    if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 ]]; then
+        if command -v mintty >/dev/null 2>&1; then
+            mintty -t "$title" -e /bin/bash "$runner_file" >/dev/null 2>&1 &
+            disown $! 2>/dev/null || true
+            return 0
+        fi
+        local win_bash win_runner
+        win_bash=$(command -v bash)
+        if command -v cygpath >/dev/null 2>&1; then
+            win_bash=$(cygpath -w "$win_bash")
+            win_runner=$(cygpath -w "$runner_file")
+        else
+            win_runner="$runner_file"
+        fi
+        if command -v powershell.exe >/dev/null 2>&1; then
+            local esc_wb="${win_bash//\'/\'\'}"
+            local esc_wr="${win_runner//\'/\'\'}"
+            powershell.exe -NoProfile -Command "Start-Process -FilePath '$esc_wb' -ArgumentList '\"$esc_wr\"' -WindowStyle Normal" >/dev/null 2>&1 && return 0
+        fi
+        if command -v cmd.exe >/dev/null 2>&1; then
+            MSYS_NO_PATHCONV=1 cmd.exe /c start "$title" "$win_bash" "$win_runner" >/dev/null 2>&1 && return 0
+        fi
+    fi
 
     if [[ "$OSTYPE" == darwin* ]] && [[ "$TERM_PROGRAM" == "iTerm.app" ]] && command -v osascript >/dev/null 2>&1; then
         osascript -e "tell application \"iTerm2\" to tell current window to create tab with default profile command \"$runner_file\"" 2>/dev/null && return 0
@@ -402,6 +475,7 @@ start_service_idx() {
     local repo_type="${SVC_TYPES[$idx]}"
     local default_port="${SVC_PORTS[$idx]}"
     local cmd_spec="${SVC_CMD_UNIX[$idx]}"
+    local cmd_win_spec="${SVC_CMD_WIN[$idx]}"
     local load_env="${SVC_LOAD_ENV[$idx]}"
     local label
     label=$(format_service_label "$emoji" "$name")
@@ -418,6 +492,11 @@ start_service_idx() {
     if [[ -n "$cmd_spec" ]]; then
         if is_script_file_command "$full_path" "$cmd_spec" && [[ ! -f "$full_path/$cmd_spec" ]]; then
             error "ERROR: Runner script not found: $full_path/$cmd_spec"
+            return 1
+        fi
+    elif [[ "${IS_WINDOWS_BASH:-0}" -eq 1 && -n "$cmd_win_spec" ]]; then
+        if [[ "$cmd_win_spec" != *[[:space:]]* && ( "$cmd_win_spec" == *.bat || "$cmd_win_spec" == *.cmd || "$cmd_win_spec" == *.ps1 ) && ! -f "$full_path/$cmd_win_spec" ]]; then
+            error "ERROR: Runner script not found: $full_path/$cmd_win_spec"
             return 1
         fi
     elif [[ "$repo_type" == "custom" ]]; then
@@ -446,19 +525,51 @@ start_service_idx() {
     if [[ "$mode" == "--bg" || "$mode" == "bg" ]]; then
         echo -e "  \033[1;36mStarting $label in background...\033[0m"
         local log_file="$SCRIPT_DIR/logs/${slug}_run.log"
-        (
-            execute_service_body "$idx"
-        ) > "$log_file" 2>&1 &
-        local pid=$!
+        local pid=""
+        if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 ]] && command -v powershell.exe >/dev/null 2>&1; then
+            local self_bundle bg_runner win_bash win_bg
+            self_bundle=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+            bg_runner="$SCRIPT_DIR/.runners/bg_${slug}.sh"
+            cat <<BGEOF > "$bg_runner"
+#!/bin/bash
+export WORKSPACE_ROOT_DIR=$(printf '%q' "$SCRIPT_DIR")
+exec bash $(printf '%q' "$self_bundle") __run-service $(printf '%q' "$slug") > $(printf '%q' "$log_file") 2>&1
+BGEOF
+            chmod +x "$bg_runner"
+            win_bash=$(command -v bash)
+            if command -v cygpath >/dev/null 2>&1; then
+                win_bash=$(cygpath -w "$win_bash")
+                win_bg=$(cygpath -w "$bg_runner")
+            else
+                win_bg="$bg_runner"
+            fi
+            local esc_wb="${win_bash//\'/\'\'}"
+            local esc_wbg="${win_bg//\'/\'\'}"
+            pid=$(powershell.exe -NoProfile -Command "(Start-Process -FilePath '$esc_wb' -ArgumentList '\"$esc_wbg\"' -WindowStyle Hidden -PassThru).Id" 2>/dev/null | tr -d '\r[:space:]')
+        fi
+        if [[ -z "$pid" ]]; then
+            (
+                execute_service_body "$idx"
+            ) > "$log_file" 2>&1 </dev/null &
+            local msys_pid=$!
+            if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 && -r "/proc/${msys_pid}/winpid" ]]; then
+                pid=$(tr -d '[:space:]' < "/proc/${msys_pid}/winpid" 2>/dev/null || echo "$msys_pid")
+            else
+                pid="$msys_pid"
+            fi
+            disown "$msys_pid" 2>/dev/null || true
+        fi
         echo "$pid" > "$SCRIPT_DIR/.pids/${slug}.pid"
-        disown "$pid" 2>/dev/null || true
         echo -e "  \033[1;32m$label started in background (PID: $pid). Logs: $log_file\033[0m"
     else
         echo -e "  \033[1;36mStarting $label in new terminal window/tab...\033[0m"
         rm -f "$SCRIPT_DIR/.pids/${slug}.pid"
-        local runner_file
+        local runner_file win_title
         runner_file=$(generate_runner_script "$idx" "$port")
-        launch_terminal "$slug" "$runner_file"
+        win_title="$WORKSPACE_NAME - $name"
+        [[ -n "$emoji" ]] && win_title="$emoji $win_title"
+        [[ -n "$port" ]] && win_title="$win_title (Port $port)"
+        launch_terminal "$slug" "$runner_file" "$win_title"
 
         local waited=0
         while [[ ! -s "$SCRIPT_DIR/.pids/${slug}.pid" && $waited -lt 15 ]]; do
@@ -490,6 +601,11 @@ get_descendants() {
 
 kill_pid_tree() {
     local target_pid="$1"
+    [[ -z "$target_pid" ]] && return 0
+    if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 ]] && command -v taskkill.exe >/dev/null 2>&1; then
+        MSYS_NO_PATHCONV=1 taskkill.exe /T /F /PID "$target_pid" >/dev/null 2>&1 || true
+        return 0
+    fi
     local descendants p
     descendants=$(get_descendants "$target_pid")
 
@@ -543,7 +659,7 @@ stop_service_idx() {
     if [[ -f "$pid_file" ]]; then
         local saved_pid
         saved_pid=$(tr -d '[:space:]' < "$pid_file" 2>/dev/null)
-        if [[ -n "$saved_pid" ]] && kill -0 "$saved_pid" 2>/dev/null; then
+        if is_pid_alive "$saved_pid"; then
             kill_pid_tree "$saved_pid"
         fi
         rm -f "$pid_file"
@@ -661,16 +777,24 @@ force_kill_port() {
 force_kill_cmd() {
     local pattern="$1"
     local label="$2"
-    local pids="" p
-    if command -v pgrep >/dev/null 2>&1; then
+    local pids="" p self_winpid=""
+    if [[ "${IS_WINDOWS_BASH:-0}" -eq 1 ]]; then
+        [[ -r /proc/$$/winpid ]] && self_winpid=$(tr -d '[:space:]' < /proc/$$/winpid 2>/dev/null || true)
+        if command -v powershell.exe >/dev/null 2>&1; then
+            local esc_pat="${pattern//\'/\'\'}"
+            pids=$(powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { \$_.CommandLine -and \$_.CommandLine -match '$esc_pat' } | Select-Object -ExpandProperty ProcessId" 2>/dev/null | tr -d '\r')
+        elif command -v ps >/dev/null 2>&1; then
+            pids=$(ps -W 2>/dev/null | grep -F "$pattern" | awk '{print $4}')
+        fi
+    elif command -v pgrep >/dev/null 2>&1; then
         pids=$(pgrep -f "$pattern" 2>/dev/null || true)
     else
         pids=$(ps aux 2>/dev/null | grep -F "$pattern" | grep -v grep | awk '{print $2}' || true)
     fi
     if [[ -n "$pids" ]]; then
         while IFS= read -r p; do
-            p=$(trim_ws "$p")
-            [[ -z "$p" || "$p" == "$$" ]] && continue
+            p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"
+            [[ -z "$p" || "$p" == "$$" || ( -n "$self_winpid" && "$p" == "$self_winpid" ) ]] && continue
             echo -e "    \033[1;33mKilling $label process matching '$pattern' (PID: $p)\033[0m"
             kill_pid_tree "$p"
         done <<EOF
