@@ -88,8 +88,8 @@ function Invoke-TemplateFlutterWeb {
     if (Test-Path ".dart_tool\chrome-device") {
         Remove-Item -Recurse -Force ".dart_tool\chrome-device"
     }
-    $defaultSlug = (Split-Path -Leaf (Get-Location).Path).ToLower() -replace '[^a-z0-9._-]', '-'
-    $appSlug = if ($env:APP_SLUG) { ($env:APP_SLUG.ToLower() -replace '[^a-z0-9._-]', '-') } else { $defaultSlug }
+    $defaultSlug = "$((Split-Path -Leaf (Get-Location).Path))".ToLower() -replace '[^a-z0-9._-]', '-'
+    $appSlug = if ($env:APP_SLUG) { ("$($env:APP_SLUG)".ToLower() -replace '[^a-z0-9._-]', '-') } else { $defaultSlug }
     $webPort = if ($env:PORT) { $env:PORT } else { "3000" }
     $userDataDir = if ($env:CHROME_USER_DATA_DIR) { $env:CHROME_USER_DATA_DIR } else { Join-Path $env:TEMP "$appSlug-chrome-data" }
 

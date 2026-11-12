@@ -566,7 +566,7 @@ function Resolve-TargetAndBg {
     $bg = $false; $target = ""
     foreach ($a in @($Arg1, $Arg2)) {
         if (-not $a) { continue }
-        $al = $a.Trim().ToLower()
+        $al = "$a".Trim().ToLower()
         if ($al -in @("--bg", "bg", "-bg")) { $bg = $true }
         elseif ($al -ne "all" -and -not $target) { $target = $a.Trim() }
     }

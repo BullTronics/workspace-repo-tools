@@ -90,10 +90,10 @@ function Invoke-GitDispatch {
         break
     }
 
-    $rem = if ($i -lt $GitCmdArgs.Count) { $GitCmdArgs[$i..($GitCmdArgs.Count - 1)] } else { @() }
+    $rem = if ($i -lt $GitCmdArgs.Count) { @($GitCmdArgs[$i..($GitCmdArgs.Count - 1)]) } else { @() }
     if ($rem.Count -eq 0) { Show-UnifiedMenu; $script:CommandSucceeded = $true; return }
-    $gcmd = $rem[0].ToLower()
-    $gargs = if ($rem.Count -gt 1) { $rem[1..($rem.Count - 1)] } else { @() }
+    $gcmd = "$($rem[0])".ToLower()
+    $gargs = if ($rem.Count -gt 1) { @($rem[1..($rem.Count - 1)]) } else { @() }
 
     switch ($gcmd) {
         "clone" {
@@ -130,7 +130,7 @@ function Invoke-GitDispatch {
                 $script:CommandSucceeded = $false
                 return
             }
-            $subArgs = if ($gargs.Count -gt 1) { $gargs[1..($gargs.Count - 1)] } else { @() }
+            $subArgs = if ($gargs.Count -gt 1) { @($gargs[1..($gargs.Count - 1)]) } else { @() }
             Invoke-GitRepositories -RepoFilter $repoFilter -CommandName $gargs[0] -GitArgs $subArgs
         }
         default {
@@ -146,8 +146,8 @@ function Invoke-WorkspaceCommand {
     if (-not $CmdArgs -or $CmdArgs.Count -eq 0) { return }
 
     $rawFirst = $CmdArgs[0]
-    $first = $rawFirst.ToLower()
-    $rest = if ($CmdArgs.Count -gt 1) { $CmdArgs[1..($CmdArgs.Count - 1)] } else { @() }
+    $first = "$rawFirst".ToLower()
+    $rest = if ($CmdArgs.Count -gt 1) { @($CmdArgs[1..($CmdArgs.Count - 1)]) } else { @() }
 
     if ($first -in @("-r", "--repo", "-repo") -or $first -like "--repo=*") {
         Invoke-GitDispatch -GitCmdArgs $CmdArgs
@@ -180,7 +180,7 @@ function Invoke-WorkspaceCommand {
         "stop" {
             $a1 = if ($rest.Count -gt 0) { $rest[0] } else { "" }
             $ok = $true
-            if (-not $a1 -or $a1.ToLower() -eq "all") {
+            if (-not $a1 -or "$a1".ToLower() -eq "all") {
                 Stop-AllServices
             } else {
                 $svc = Find-ServiceByName -TargetName $a1
@@ -255,7 +255,7 @@ if ($args.Count -gt 0) {
 # --- Direct CLI Mode ---
 if ($args.Count -gt 0) {
     Invoke-WorkspaceCommand -CmdArgs $args
-    $firstLc = $args[0].ToLower()
+    $firstLc = "$($args[0])".ToLower()
     if ($firstLc -notin @("help", "-h", "--help", "check-update", "update-check", "update", "upgrade", "version")) {
         Invoke-UpdateBannerCheck -Mode "--bg"
     }
@@ -288,8 +288,8 @@ try {
         $trimmed = $line.Trim()
         if (-not $trimmed) { continue }
 
-        $parts = $trimmed -split '\s+'
-        if ($parts[0].ToLower() -in @("quit", "exit", "q")) {
+        $parts = @($trimmed -split '\s+')
+        if ("$($parts[0])".ToLower() -in @("quit", "exit", "q")) {
             break
         }
 

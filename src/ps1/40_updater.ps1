@@ -304,7 +304,7 @@ function Invoke-UpdateCommand {
 
         if (-not $autoYes) {
             $ans = Read-Host "Proceed with update? [y/N]"
-            if ($ans.Trim().ToLower() -notin @("y", "yes")) {
+            if ("$ans".Trim().ToLower() -notin @("y", "yes")) {
                 Write-Host "Update cancelled."
                 return $true
             }

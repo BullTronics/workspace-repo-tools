@@ -26,7 +26,7 @@ function Load-WorkspaceConf {
     if ($conf.ContainsKey("TOOLS_REPO_URL") -and $conf["TOOLS_REPO_URL"]) { $script:ToolsRepoUrl = $conf["TOOLS_REPO_URL"].TrimEnd('/') }
     if ($conf.ContainsKey("TOOLS_RELEASE_BASE_URL") -and $conf["TOOLS_RELEASE_BASE_URL"]) { $script:ToolsReleaseBaseUrl = $conf["TOOLS_RELEASE_BASE_URL"].TrimEnd('/') }
     if ($conf.ContainsKey("DISABLE_AUTO_UPDATE_CHECK") -and $conf["DISABLE_AUTO_UPDATE_CHECK"]) {
-        $v = $conf["DISABLE_AUTO_UPDATE_CHECK"].ToLower()
+        $v = "$($conf["DISABLE_AUTO_UPDATE_CHECK"])".Trim().ToLower()
         if ($v -eq "true") { $script:DisableAutoCheck = $true }
         elseif ($v -eq "false") { $script:DisableAutoCheck = $false }
     }
@@ -118,7 +118,7 @@ function Get-RepoEntries {
 
 function Normalize-RepoType {
     param([string]$Raw)
-    switch ($Raw.Trim().ToLower()) {
+    switch ("$Raw".Trim().ToLower()) {
         "" { return "custom" }
         "custom" { return "custom" }
         { $_ -in @("spring-boot", "spring-boot-maven") } { return "spring-boot" }
@@ -220,7 +220,7 @@ function Load-ServicesCsv {
 
         $cmdWin = if ($row.cmd_win -and $row.cmd_win.Trim()) { $row.cmd_win.Trim() } else { "" }
 
-        $loadRaw = if ($row.load_env_file) { $row.load_env_file.Trim().ToLower() } else { "" }
+        $loadRaw = if ($row.load_env_file) { "$($row.load_env_file)".Trim().ToLower() } else { "" }
         $loadEnv = $false
         if ($loadRaw -eq "true") { $loadEnv = $true }
         elseif ($loadRaw -and $loadRaw -ne "false") {

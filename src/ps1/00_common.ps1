@@ -26,7 +26,7 @@ if (-not (Test-Path $ToolsStateDir)) {
 
 function ConvertTo-Slug {
     param([string]$Text)
-    return ($Text.ToLower() -replace '[^a-z0-9._-]', '-')
+    return ("$Text".ToLower() -replace '[^a-z0-9._-]', '-')
 }
 
 function Read-KvFile {
@@ -99,13 +99,13 @@ function Verify-Sha256Manifest {
     foreach ($line in (Get-Content $SumsFile -Encoding UTF8)) {
         if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?\.?/?(.+?)\s*$') {
             if ($Matches[2] -eq $AssetName) {
-                $expected = $Matches[1].ToLower()
+                $expected = "$($Matches[1])".ToLower()
                 break
             }
         }
     }
     if (-not $expected) { return $true }
-    $actual = (Get-FileHash -Path $LocalFile -Algorithm SHA256).Hash.ToLower()
+    $actual = "$((Get-FileHash -Path $LocalFile -Algorithm SHA256).Hash)".ToLower()
     if ($actual -ne $expected) {
         Write-Host "Checksum mismatch for $AssetName!" -ForegroundColor Red
         Write-Host "  Expected: $expected" -ForegroundColor Red
