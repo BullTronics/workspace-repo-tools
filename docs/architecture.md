@@ -93,5 +93,5 @@ Before CLI dispatch or REPL initialization, [`99_main.sh`](../src/sh/99_main.sh#
   - Because `library-bundle-<new_ver>` uses a new versioned filename, upgrading never overwrites the currently executing bundle file on disk.
 - **Windows TLS & Flutter Chrome wrapper**:
   - `workspace.ps1`, `install.ps1`, and `00_common.ps1` explicitly enable `[Net.SecurityProtocolType]::Tls12` before calling `Invoke-WebRequest` for compatibility with older Windows PowerShell 5.1 hosts.
-  - [`templates/flutter-web/runner.ps1`](../templates/flutter-web/runner.ps1) compiles a small C# helper (`chrome-launcher.exe` via `Add-Type`) so Flutter's `--user-data-dir` flag works reliably with Windows Chrome without arg-splitting issues.
+  - [`templates/flutter-web/runner.ps1`](../templates/flutter-web/runner.ps1) and [`templates/flutter-web/runner.sh`](../templates/flutter-web/runner.sh) compile a small C# helper (`chrome-launcher.exe` via `Add-Type`) on Windows so Flutter's `--user-data-dir` flag works reliably with Windows Chrome without arg-splitting or profile wiping issues in both PowerShell and Git Bash.
 

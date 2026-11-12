@@ -46,9 +46,16 @@ class ChromeLauncher {
             catch { Console.WriteLine("Google Chrome"); }
             return 0;
         }
+        string envUserData = Environment.GetEnvironmentVariable("CHROME_USER_DATA_DIR");
         string preferred = null;
-        for (int i = args.Length - 1; i >= 0; i--) {
-            if (args[i].StartsWith("--user-data-dir=", StringComparison.OrdinalIgnoreCase)) { preferred = args[i]; break; }
+        if (!string.IsNullOrEmpty(envUserData)) {
+            preferred = envUserData.StartsWith("--user-data-dir=", StringComparison.OrdinalIgnoreCase)
+                ? envUserData
+                : "--user-data-dir=" + envUserData;
+        } else {
+            for (int i = args.Length - 1; i >= 0; i--) {
+                if (args[i].StartsWith("--user-data-dir=", StringComparison.OrdinalIgnoreCase)) { preferred = args[i]; break; }
+            }
         }
         List<string> finalArgs = new List<string>();
         bool added = false;
@@ -56,6 +63,9 @@ class ChromeLauncher {
             if (arg.StartsWith("--user-data-dir=", StringComparison.OrdinalIgnoreCase)) {
                 if (!added) { finalArgs.Add(preferred ?? arg); added = true; }
             } else { finalArgs.Add(arg); }
+        }
+        if (!added && !string.IsNullOrEmpty(preferred)) {
+            finalArgs.Add(preferred);
         }
         StringBuilder cmdLine = new StringBuilder();
         for (int i = 0; i < finalArgs.Count; i++) {
